@@ -1,0 +1,15 @@
+{application, antidote_channels,
+ [{description, "A inter-node communication library with various patterns over different messaging middlewares"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {applications,
+   [kernel,
+    stdlib,
+    amqp_client
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.
