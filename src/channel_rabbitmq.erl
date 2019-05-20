@@ -12,11 +12,11 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {channel, connection, exchange, handler, subscriber_tag}).
+-record(channel_state, {channel, connection, exchange, handler, subscriber_tags}).
 
 %% API
--export([start_link/1, publish/2, stop/1]).
--export([init_channel/1, publish_async/2, handle_subscription/2, event_for_message/1, terminate/2]).
+-export([start_link/1, publish/3, stop/1]).
+-export([init_channel/1, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
 
 
 -spec start_link(Config :: channel_config()) ->
@@ -30,11 +30,11 @@ start_link(Config) ->
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
-publish(Pid, Msg) ->
-  antidote_channel:publish_async(Pid, Msg).
+publish(Pid, Topic, Msg) ->
+  antidote_channel:publish_async(Pid, Topic, Msg).
 
 init_channel(#pub_sub_channel_config{
-  topic = Topic,
+  topics = Topics,
   namespace = Namespace,
   network_params = #amqp_params{username = U, password = Pass, virtual_host = _V, host = H, port = Port},
   subscriber = Process}
@@ -54,17 +54,19 @@ init_channel(#pub_sub_channel_config{
     {ok, Connection, Channel} ->
       amqp_channel:register_return_handler(Channel, self()),
       QueueParams = #'queue.declare'{exclusive = true},
-      {ok, Queue} = fanout_routing_declare(Channel, Namespace, Topic, QueueParams),
-      {ok, Tag} = subscribe_queue(Channel, Queue, self()),
-      {ok, #channel_state{channel = Channel, connection = Connection, handler = Process, exchange = Namespace, subscriber_tag = Tag}};
+      {ok, Queues} = direct_routing_declare(Channel, Namespace, Topics, QueueParams),
+      Tags = lists:foldl(fun(Q, TAcc) ->
+        {ok, Tag} = subscribe_queue(Channel, Q, self()),
+        [Tag | TAcc] end, [], Queues),
+      {ok, #channel_state{channel = Channel, connection = Connection, handler = Process, exchange = Namespace, subscriber_tags = Tags}};
     Other -> {error, Other}
   end;
 
 init_channel(_Config) ->
   {error, bad_configuration}.
 
-publish_async(Msg, #channel_state{channel = Channel, exchange = Exchange} = State) ->
-  Publish = #'basic.publish'{exchange = Exchange},
+publish_async(Topic, Msg, #channel_state{channel = Channel, exchange = Exchange} = State) ->
+  Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
   amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Msg}),
   {ok, State}.
 
@@ -76,8 +78,10 @@ handle_subscription(#message{payload = {#'basic.deliver'{delivery_tag = Tag}, #a
   end,
   {ok, State}.
 
-terminate(_Reason, #channel_state{connection = Connection, channel = Channel, subscriber_tag = T}) ->
-  amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T}),
+terminate(_Reason, #channel_state{connection = Connection, channel = Channel, subscriber_tags = Ts}) ->
+  lists:foreach(fun(T) ->
+    amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T})
+                end, Ts),
   amqp_channel:close(Channel),
   amqp_connection:close(Connection).
 
@@ -91,16 +95,21 @@ event_for_message(_) -> {error, bad_request}.
 %%% Private Functions
 %%%===================================================================
 
-fanout_routing_declare(Channel, ExchangeName, RoutingKey, #'queue.declare'{} = Params) ->
-  Exchange = #'exchange.declare'{exchange = ExchangeName, type = <<"fanout">>},
+
+% Using one queue per routing_key. Can use multiple routing keys per queue, instead.
+% Need to check performance to compare.
+direct_routing_declare(Channel, ExchangeName, RoutingKeys, #'queue.declare'{} = Params) ->
+  Exchange = #'exchange.declare'{exchange = ExchangeName, type = <<"direct">>},
   #'exchange.declare_ok'{} = amqp_channel:call(Channel, Exchange),
-  #'queue.declare_ok'{queue = Queue} = amqp_channel:call(Channel, Params),
-  Binding = #'queue.bind'{
-    queue = Queue,
-    exchange = ExchangeName,
-    routing_key = RoutingKey},
-  #'queue.bind_ok'{} = amqp_channel:call(Channel, Binding),
-  {ok, Queue}.
+  Queues = lists:foldl(fun(RK, Qs) ->
+    #'queue.declare_ok'{queue = Queue} = amqp_channel:call(Channel, Params),
+    Binding = #'queue.bind'{
+      queue = Queue,
+      exchange = ExchangeName,
+      routing_key = RK},
+    #'queue.bind_ok'{} = amqp_channel:call(Channel, Binding),
+    [Queue | Qs] end, [], RoutingKeys),
+  {ok, Queues}.
 
 subscribe_queue(Channel, Queue, Subscriber) ->
   Sub = #'basic.consume'{queue = Queue},

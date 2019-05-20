@@ -32,7 +32,7 @@
 
 -record(message, {payload}).
 -record(pub_sub_channel_config, {
-  topic :: binary(),
+  topics :: [binary()],
   namespace :: binary(),
   network_params :: term(),
   %%topic_params :: term(),
