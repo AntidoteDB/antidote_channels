@@ -92,8 +92,12 @@ stop(Pid) ->
   {stop, Reason :: term()} | ignore.
 
 init([Mod, Config]) ->
-  {ok, Channel, InitState} = Mod:init_channel(Config),
-  {ok, #state{module = Mod, config = Config, channel = Channel, channel_state = InitState}}.
+  Res = (catch Mod:init_channel(Config)),
+  case Res of
+    {ok, Channel, InitState} ->
+      {ok, #state{module = Mod, config = Config, channel = Channel, channel_state = InitState}};
+    {error, Reason} -> {stop, Reason}
+  end.
 
 
 -spec handle_call(Request :: term(), From :: {pid(), Tag :: term()},
@@ -141,10 +145,8 @@ handle_message(push_notification, Msg, #state{module = Mod, channel = C, channel
 
 -spec terminate(Reason :: atom(), State :: state()) -> Void :: any().
 
-%TODO: terminate channel
-terminate(_Reason, #state{module = _Mod} = _State) ->
-  io:format("(terminate) stopping~n"),
-  ok.
+terminate(Reason, #state{module = Mod, channel = C, channel_state = S} = _State) ->
+  Mod:terminate(Reason, C, S).
 
 -spec code_change(OldVsn :: term(), State :: tuple(), Extra :: term()) ->
   {ok, NewState :: tuple()}.

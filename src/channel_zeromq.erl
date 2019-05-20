@@ -16,7 +16,7 @@
 
 %% API
 -export([start_link/1, publish/2, stop/1]).
--export([init_channel/1, publish_async/3, handle_subscription/3, event_for_message/1]).
+-export([init_channel/1, publish_async/3, handle_subscription/3, event_for_message/1, terminate/3]).
 
 
 -spec start_link(Config :: channel_config()) ->
@@ -43,32 +43,39 @@ init_channel(#pub_sub_channel_config{
   },
   subscriber = Process}
 ) ->
-  try
-    {ok, Context} = erlzmq:context(),
-    {ok, Publisher} = erlzmq:socket(Context, pub),
-    ConnString = connection_string({"*", Port}),
-    ok = erlzmq:bind(Publisher, ConnString),
+  {ok, Context} = erlzmq:context(),
+  {ok, Publisher} = erlzmq:socket(Context, pub),
+  ConnString = connection_string({"*", Port}),
+  Res = erlzmq:bind(Publisher, ConnString),
+  case Res of
+    ok ->
+      TopicString = binary_join([Namespace, Topic], <<".">>),
+      Subs = lists:foldl(fun(Address, AddressList) ->
+        {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
+        ConnStringI = connection_string(Address),
+        ok = erlzmq:connect(Subscriber, ConnStringI),
+        ok = erlzmq:setsockopt(Subscriber, subscribe, TopicString),
+        [Subscriber | AddressList] end, [], Pubs),
 
-    TopicString = binary_join([Namespace, Topic], <<".">>),
-
-    Subs = lists:foldl(fun(Address, AddressList) ->
-      {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
-      ConnStringI = connection_string(Address),
-      ok = erlzmq:connect(Subscriber, ConnStringI),
-      ok = erlzmq:setsockopt(Subscriber, subscribe, TopicString),
-      [Subscriber | AddressList] end, [], Pubs),
-
-    %%Need to send a message to the socket so it starts working
-    erlzmq:send(Publisher, <<"init">>),
-    timer:sleep(500),
-
-    {ok, Publisher, #channel_state{context = Context, subscriber = Process, namespace = Namespace, topic = Topic, publishers = Subs, namespace_topic = TopicString, current = waiting}}
-  catch
-    failed_to_create_zmq_socket:E -> {error, E}
+%%Need to send a message to the socket so it starts working
+      erlzmq:send(Publisher, <<"init">>),
+      timer:sleep(500),
+      {ok, Publisher,
+        #channel_state{
+          context = Context,
+          subscriber = Process,
+          namespace = Namespace,
+          topic = Topic,
+          publishers = Subs,
+          namespace_topic = TopicString,
+          current = waiting
+        }
+      };
+    Error -> Error
   end;
 
 init_channel(_Config) ->
-  {error, bad_configuration1}.
+  {error, bad_configuration}.
 
 publish_async(Msg, Channel, #channel_state{namespace_topic = NT} = State) ->
   ok = erlzmq:send(Channel, NT, [sndmore]),
@@ -81,7 +88,12 @@ handle_subscription(#message{payload = {zmq, _Socket, Msg, _Flags}}, _Channel, #
   gen_server:call(S, binary_to_term(Msg)),
   {ok, State}.
 
-%terminate(Channel, #channel_state{subscriber = S, context = C, publishers = P} = State) ->
+%%What to do with Subscriber? --- do nothing.
+terminate(_Reason, Channel, #channel_state{context = C, publishers = P}) ->
+  lists:foreach(fun(Pi) -> erlzmq:close(Pi) end, P),
+  erlzmq:close(Channel),
+  erlzmq:term(C).
+
 
 event_for_message({zmq, _Socket, _BinaryMsg, _Flags}) -> {ok, push_notification};
 event_for_message(_) -> {error, bad_request}.

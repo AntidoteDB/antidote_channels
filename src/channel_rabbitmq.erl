@@ -12,11 +12,11 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {exchange, subscriber, subscriber_tag}).
+-record(channel_state, {connection, exchange, subscriber, subscriber_tag}).
 
 %% API
 -export([start_link/1, publish/2, stop/1]).
--export([init_channel/1, publish_async/3, handle_subscription/3, event_for_message/1]).
+-export([init_channel/1, publish_async/3, handle_subscription/3, event_for_message/1, terminate/3]).
 
 
 -spec start_link(Config :: channel_config()) ->
@@ -41,18 +41,22 @@ init_channel(#pub_sub_channel_config{
 ) ->
   NetworkParams = #amqp_params_network{username = U, password = Pass, host = H, port = Port},
   Res = case amqp_connection:start(NetworkParams) of
-          {ok, Connection} ->
-            amqp_connection:open_channel(Connection);
-          Error -> Error
+          {ok, Con} ->
+            CRes = amqp_connection:open_channel(Con),
+            case CRes of
+              {ok, Chan} -> {ok, Con, Chan};
+              ErrorChan -> ErrorChan
+            end;
+          ErrorCon -> ErrorCon
         end,
 
   case Res of
-    {ok, Channel} ->
+    {ok, Connection, Channel} ->
       amqp_channel:register_return_handler(Channel, self()),
       QueueParams = #'queue.declare'{exclusive = true},
       {ok, Queue} = fanout_routing_declare(Channel, Namespace, Topic, QueueParams),
       {ok, Tag} = subscribe_queue(Channel, Queue, self()),
-      {ok, Channel, #channel_state{subscriber = Process, exchange = Namespace, subscriber_tag = Tag}};
+      {ok, Channel, #channel_state{connection = Connection, subscriber = Process, exchange = Namespace, subscriber_tag = Tag}};
     Other -> {error, Other}
   end;
 
@@ -71,6 +75,11 @@ handle_subscription(#message{payload = {#'basic.deliver'{delivery_tag = Tag}, #a
     _ -> amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag})
   end,
   {ok, State}.
+
+terminate(_Reason, Channel, #channel_state{connection = Connection, subscriber_tag = T}) ->
+  amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T}),
+  amqp_channel:close(Channel),
+  amqp_connection:close(Connection).
 
 
 event_for_message({#'basic.deliver'{}, #'amqp_msg'{}}) -> {ok, push_notification};
