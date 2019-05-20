@@ -12,11 +12,11 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {connection, exchange, subscriber, subscriber_tag}).
+-record(channel_state, {channel, connection, exchange, handler, subscriber_tag}).
 
 %% API
 -export([start_link/1, publish/2, stop/1]).
--export([init_channel/1, publish_async/3, handle_subscription/3, event_for_message/1, terminate/3]).
+-export([init_channel/1, publish_async/2, handle_subscription/2, event_for_message/1, terminate/2]).
 
 
 -spec start_link(Config :: channel_config()) ->
@@ -56,19 +56,19 @@ init_channel(#pub_sub_channel_config{
       QueueParams = #'queue.declare'{exclusive = true},
       {ok, Queue} = fanout_routing_declare(Channel, Namespace, Topic, QueueParams),
       {ok, Tag} = subscribe_queue(Channel, Queue, self()),
-      {ok, Channel, #channel_state{connection = Connection, subscriber = Process, exchange = Namespace, subscriber_tag = Tag}};
+      {ok, #channel_state{channel = Channel, connection = Connection, handler = Process, exchange = Namespace, subscriber_tag = Tag}};
     Other -> {error, Other}
   end;
 
 init_channel(_Config) ->
   {error, bad_configuration}.
 
-publish_async(Msg, Channel, #channel_state{exchange = Exchange} = State) ->
+publish_async(Msg, #channel_state{channel = Channel, exchange = Exchange} = State) ->
   Publish = #'basic.publish'{exchange = Exchange},
   amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Msg}),
   {ok, State}.
 
-handle_subscription(#message{payload = {#'basic.deliver'{delivery_tag = Tag}, #amqp_msg{payload = Content}}}, Channel, #channel_state{subscriber = S} = State) ->
+handle_subscription(#message{payload = {#'basic.deliver'{delivery_tag = Tag}, #amqp_msg{payload = Content}}}, #channel_state{channel = Channel, handler = S} = State) ->
   Resp = gen_server:call(S, Content),
   case Resp of
     {error, _Reason} -> amqp_channel:cast(Channel, #'basic.nack'{delivery_tag = Tag});
@@ -76,7 +76,7 @@ handle_subscription(#message{payload = {#'basic.deliver'{delivery_tag = Tag}, #a
   end,
   {ok, State}.
 
-terminate(_Reason, Channel, #channel_state{connection = Connection, subscriber_tag = T}) ->
+terminate(_Reason, #channel_state{connection = Connection, channel = Channel, subscriber_tag = T}) ->
   amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T}),
   amqp_channel:close(Channel),
   amqp_connection:close(Connection).

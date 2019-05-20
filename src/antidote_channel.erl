@@ -48,11 +48,11 @@
 %%% Callback declarations
 %%%===================================================================
 
--callback init_channel(Config :: channel_config()) -> {ok, Channel :: channel()} | {error, Reason :: term()}.
+-callback init_channel(Config :: channel_config()) -> {ok, State :: channel_state()} | {error, Reason :: term()}.
 
--callback publish_async(Msg :: message(), MsgParams :: message_params(), Channel :: channel()) -> {ok, State :: channel_state()}.
+-callback publish_async(Msg :: message(), State :: channel_state()) -> {ok, State :: channel_state()}.
 
--callback handle_subscription(Msg :: message(), Channel :: channel(), State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
+-callback handle_subscription(Msg :: message(), State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
 -callback event_for_message(Info :: term()) -> {ok, event()} | {error, Reason :: atom()}.
 
@@ -94,8 +94,8 @@ stop(Pid) ->
 init([Mod, Config]) ->
   Res = (catch Mod:init_channel(Config)),
   case Res of
-    {ok, Channel, InitState} ->
-      {ok, #state{module = Mod, config = Config, channel = Channel, channel_state = InitState}};
+    {ok, InitState} ->
+      {ok, #state{module = Mod, config = Config, channel_state = InitState}};
     {error, Reason} -> {stop, Reason}
   end.
 
@@ -116,8 +116,8 @@ handle_call(_, _, State) -> {noreply, State}.
   {noreply, NewState :: state(), timeout() | hibernate | {continue, term()}} |
   {stop, Reason :: term(), NewState :: state()}.
 
-handle_cast({publish_async, Msg}, #state{module = Mod, channel = C, channel_state = S} = State) ->
-  {ok, S1} = Mod:publish_async(Msg, C, S),
+handle_cast({publish_async, Msg}, #state{module = Mod, channel_state = S} = State) ->
+  {ok, S1} = Mod:publish_async(Msg, S),
   {noreply, State#state{channel_state = S1}}.
 
 -spec handle_info(Info :: timeout | term(), State :: state()) ->
@@ -139,14 +139,14 @@ handle_info(Info, #state{module = Mod} = State) ->
 -spec handle_message(Event :: event(), Msg :: message(), State :: state()) ->
   {ok, NewState :: state()}.
 
-handle_message(push_notification, Msg, #state{module = Mod, channel = C, channel_state = S} = State) ->
-  {_Resp, S1} = Mod:handle_subscription(#message{payload = Msg}, C, S),
+handle_message(push_notification, Msg, #state{module = Mod, channel_state = S} = State) ->
+  {_Resp, S1} = Mod:handle_subscription(#message{payload = Msg}, S),
   {ok, State#state{channel_state = S1}}.
 
 -spec terminate(Reason :: atom(), State :: state()) -> Void :: any().
 
-terminate(Reason, #state{module = Mod, channel = C, channel_state = S} = _State) ->
-  Mod:terminate(Reason, C, S).
+terminate(Reason, #state{module = Mod, channel_state = S} = _State) ->
+  Mod:terminate(Reason, S).
 
 -spec code_change(OldVsn :: term(), State :: tuple(), Extra :: term()) ->
   {ok, NewState :: tuple()}.
