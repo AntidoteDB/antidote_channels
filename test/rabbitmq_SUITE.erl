@@ -10,7 +10,7 @@ all() -> [send_receive_test, {group, multiple_subscribers}].
 
 
 -define(PUB_SUB, #pub_sub_channel_config{
-  network_params = #amqp_params_network{}
+  network_params = #amqp_params{}
 }).
 
 init_per_testcase(send_receive_test, Config) ->
@@ -57,3 +57,6 @@ send_receive_multi_test(Config) ->
   {_, Buff2} = sys:get_state(Sub2),
   true = lists:member(<<"Test">>, Buff1),
   true = lists:member(<<"Test">>, Buff2).
+
+%%TODO: termination
+%%TODO: subscribe list of topics

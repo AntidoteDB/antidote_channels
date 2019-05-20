@@ -116,7 +116,6 @@ handle_cast({publish_async, Msg}, #state{module = Mod, channel = C, channel_stat
   {ok, S1} = Mod:publish_async(Msg, C, S),
   {noreply, State#state{channel_state = S1}}.
 
-
 -spec handle_info(Info :: timeout | term(), State :: state()) ->
   {noreply, NewState :: state()} |
   {noreply, NewState :: state(), timeout() | hibernate | {continue, term()}} |
@@ -142,7 +141,8 @@ handle_message(push_notification, Msg, #state{module = Mod, channel = C, channel
 
 -spec terminate(Reason :: atom(), State :: state()) -> Void :: any().
 
-terminate(_Reason, _State) ->
+%TODO: terminate channel
+terminate(_Reason, #state{module = _Mod} = _State) ->
   io:format("(terminate) stopping~n"),
   ok.
 

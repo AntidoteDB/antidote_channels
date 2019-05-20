@@ -8,7 +8,6 @@
 %%%-------------------------------------------------------------------
 -module(channel_rabbitmq).
 -include_lib("antidote_channel.hrl").
--include_lib("amqp_client/include/amqp_client.hrl").
 
 -behavior(antidote_channel).
 
@@ -37,9 +36,10 @@ publish(Pid, Msg) ->
 init_channel(#pub_sub_channel_config{
   topic = Topic,
   namespace = Namespace,
-  network_params = #amqp_params_network{} = NetworkParams,
+  network_params = #amqp_params{username = U, password = Pass, virtual_host = _V, host = H, port = Port},
   subscriber = Process}
 ) ->
+  NetworkParams = #amqp_params_network{username = U, password = Pass, host = H, port = Port},
   Res = case amqp_connection:start(NetworkParams) of
           {ok, Connection} ->
             amqp_connection:open_channel(Connection);

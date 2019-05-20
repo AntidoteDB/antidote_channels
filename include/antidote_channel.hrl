@@ -28,6 +28,8 @@
 
 -include_lib("amqp_client/include/amqp_client.hrl").
 
+-define(DEFAULT_ZMQ_PORT, 8086).
+
 -record(message, {payload}).
 -record(pub_sub_channel_config, {
   topic :: binary(),
@@ -37,6 +39,19 @@
   subscriber :: pid()
 }).
 
+-record(zmq_params, {
+  host = "*",
+  port = ?DEFAULT_ZMQ_PORT,
+  pubAddresses = []
+}).
+
+-record(amqp_params, {
+  username = <<"guest">>,
+  password = <<"guest">>,
+  virtual_host = <<"/">>,
+  host = "localhost",
+  port = undefined
+}).
 
 -type channel() :: term().
 -type channel_config() :: term().
