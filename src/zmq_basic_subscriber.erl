@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 16. May 2019 18:12
 %%%-------------------------------------------------------------------
--module(basic_consumer).
+-module(zmq_basic_subscriber).
 -author("vbalegas").
 
 -behaviour(gen_server).
@@ -22,7 +22,12 @@ start_link() ->
 stop(Pid) ->
   gen_server:call(Pid, terminate).
 
-init([]) -> {ok, #state{}}.
+init([]) ->
+  {ok, Context} = erlzmq:context(),
+  {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
+  ok = erlzmq:connect(Subscriber, "tcp://localhost:5666"),
+  ok = erlzmq:setsockopt(Subscriber, subscribe, <<>>),
+  {ok, #state{}}.
 
 %%TODO: document the accepted replies
 handle_call(Msg, _From, #state{msg_buffer = Buff} = State) ->
@@ -31,4 +36,7 @@ handle_call(Msg, _From, #state{msg_buffer = Buff} = State) ->
 
 handle_cast(_Msg, State) -> {noreply, State}.
 
-handle_info(_Msg, State) -> {noreply, State}.
+handle_info(Msg, State) ->
+  %io:format("[ZMQ_SUB] Received message ~p~n", [Msg]),
+  ct:print("[ZMQ_SUB] Received message ~p~n", [Msg]),
+  {noreply, State}.

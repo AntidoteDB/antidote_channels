@@ -12,9 +12,12 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, stop/1, init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export([start/0, start_link/0, stop/1, init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -record(state, {msg_buffer = [] :: list()}).
+
+start() ->
+  gen_server:start(?MODULE, [], []).
 
 start_link() ->
   gen_server:start_link(?MODULE, [], []).
