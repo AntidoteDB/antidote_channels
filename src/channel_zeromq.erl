@@ -12,11 +12,11 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {namespace, topic, namespace_topic, handler, context, pub, subs, current}).
+-record(channel_state, {namespace, topics, handler, context, pub, subs, current}).
 
 %% API
--export([start_link/1, publish/2, stop/1]).
--export([init_channel/1, publish_async/2, handle_subscription/2, event_for_message/1, terminate/2]).
+-export([start_link/1, publish/3, stop/1]).
+-export([init_channel/1, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
 
 
 -spec start_link(Config :: channel_config()) ->
@@ -30,12 +30,12 @@ start_link(Config) ->
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
-publish(Pid, Msg) ->
-  antidote_channel:publish_async(Pid, term_to_binary(Msg)).
+publish(Pid, Topic, Msg) ->
+  antidote_channel:publish_async(Pid, Topic, term_to_binary(Msg)).
 
 %%TODO: Create supervisor for channels?
 init_channel(#pub_sub_channel_config{
-  topic = Topic,
+  topics = Topics,
   namespace = Namespace,
   network_params = #zmq_params{
     port = Port,
@@ -49,12 +49,15 @@ init_channel(#pub_sub_channel_config{
   Res = erlzmq:bind(Publisher, ConnString),
   case Res of
     ok ->
-      TopicString = binary_join([Namespace, Topic], <<".">>),
       Subs = lists:foldl(fun(Address, AddressList) ->
         {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
         ConnStringI = connection_string(Address),
         ok = erlzmq:connect(Subscriber, ConnStringI),
-        ok = erlzmq:setsockopt(Subscriber, subscribe, TopicString),
+        lists:foreach(
+          fun(Topic) ->
+            TopicString = binary_join([Namespace, Topic], <<".">>),
+            ok = erlzmq:setsockopt(Subscriber, subscribe, TopicString)
+          end, Topics),
         [Subscriber | AddressList] end, [], Pubs),
 
 %%Need to send a message to the socket so it starts working
@@ -65,9 +68,8 @@ init_channel(#pub_sub_channel_config{
         context = Context,
         handler = Process,
         namespace = Namespace,
-        topic = Topic,
+        topics = Topics,
         subs = Subs,
-        namespace_topic = TopicString,
         current = waiting
       }
       };
@@ -77,16 +79,34 @@ init_channel(#pub_sub_channel_config{
 init_channel(_Config) ->
   {error, bad_configuration}.
 
-publish_async(Msg, #channel_state{pub = Channel, namespace_topic = NT} = State) ->
-  ok = erlzmq:send(Channel, NT, [sndmore]),
+publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = N} = State) ->
+  TopicString = binary_join([N, Topic], <<".">>),
+  ok = erlzmq:send(Channel, TopicString, [sndmore]),
   ok = erlzmq:send(Channel, Msg),
   {ok, State}.
 
-handle_subscription(#message{payload = {zmq, _Socket, NT, [rcvmore]}}, #channel_state{namespace_topic = NT, current = waiting} = State) ->
-  {ok, State#channel_state{current = receiving}};
+handle_subscription(#message{payload = {zmq, _Socket, NamespaceTopic, [rcvmore]}}, #channel_state{namespace = N, topics = T, current = waiting} = State) ->
+  case string:split(NamespaceTopic, ".") of
+    [Namespace, Topic] when Namespace == N ->
+      case lists:member(Topic, T) of
+        true -> {ok, State#channel_state{current = receiving}};
+        false -> {ok, State}
+      end;
+    _ -> {ok, State}
+  end;
+
+handle_subscription(#message{payload = {zmq, _Socket, Msg, [rcvmore]}}, #channel_state{handler = S, current = receiving} = State) ->
+  ok = gen_server:call(S, binary_to_term(Msg)),
+  {ok, State};
+
 handle_subscription(#message{payload = {zmq, _Socket, Msg, _Flags}}, #channel_state{handler = S, current = receiving} = State) ->
-  gen_server:call(S, binary_to_term(Msg)),
+  ok = gen_server:call(S, binary_to_term(Msg)),
+  {ok, State#channel_state{current = waiting}};
+
+handle_subscription(Msg, State) ->
+  logger:info("Unhandled Message ~p", [Msg]),
   {ok, State}.
+
 
 %%What to do with Subscriber? --- do nothing.
 terminate(_Reason, #channel_state{context = C, pub = Channel, subs = Subscriptions}) ->
