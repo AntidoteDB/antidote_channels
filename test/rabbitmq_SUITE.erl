@@ -20,6 +20,7 @@ all() -> [
 
 -define(PORT, 5672).
 -define(PUB_SUB, #pub_sub_channel_config{
+  namespace = <<"test_env">>,
   network_params = #amqp_params{port = ?PORT}
 }).
 
@@ -42,49 +43,49 @@ end_per_group(multiple_subscribers, Config) ->
 init_per_testcase(init_close_test, Config) -> Config;
 
 init_per_testcase(send_receive_test, Config) ->
-  {ok, Pid1} = basic_consumer:start_link(),
-  CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<"test_env">>, topics = [<<"test_topic">>], subscriber = Pid1},
-  {ok, Pid2} = channel_rabbitmq:start_link(CConfig),
+  {ok, Sub} = basic_consumer:start_link(),
+  CConfig = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>], subscriber = Sub},
+  Chan = initChannel(CConfig),
+  [{subscriber, Sub}, {channel, Chan} | Config];
 
-  [{subscriber, Pid1}, {channel, Pid2} | Config];
-
-%%TODO: Need to unlink processes in order to use init_per_group
 init_per_testcase(send_receive_multi_test, Config) ->
-  Sub1 = ?config(subscriber1, Config),
-  Sub2 = ?config(subscriber2, Config),
-
-  CConfig1 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"test_env">>, topics = [<<"test_topic">>], subscriber = Sub1},
-  CConfig2 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"test_env">>, topics = [<<"test_topic">>], subscriber = Sub2},
-
-  {ok, Chan1} = channel_rabbitmq:start_link(CConfig1),
-  {ok, Chan2} = channel_rabbitmq:start_link(CConfig2),
-
-  [{subscriber_channel1, {Sub1, Chan1}}, {subscriber_channel2, {Sub2, Chan2}} | Config];
+  CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>]},
+  CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>]},
+  Chan1 = initChannel(CConfig1, subscriber1, Config),
+  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_diff_test, Config) ->
-  Sub1 = ?config(subscriber1, Config),
-  Sub2 = ?config(subscriber2, Config),
+  CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic1">>]},
+  CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic2">>]},
+  Chan1 = initChannel(CConfig1, subscriber1, Config),
+  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  [{channel1, Chan1}, {channel2, Chan2} | Config].
 
-  CConfig1 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"test_env">>, topics = [<<"test_topic1">>], subscriber = Sub1},
-  CConfig2 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"test_env">>, topics = [<<"test_topic2">>], subscriber = Sub2},
+initChannel(ChannelConfig, SubscriberName, TestConfig) ->
+  Sub = ?config(SubscriberName, TestConfig),
+  CConfig = ChannelConfig#pub_sub_channel_config{subscriber = Sub},
+  initChannel(CConfig).
 
-  {ok, Chan1} = channel_rabbitmq:start_link(CConfig1),
-  {ok, Chan2} = channel_rabbitmq:start_link(CConfig2),
+initChannel(ChannelConfig) ->
+  {ok, Chan} = channel_rabbitmq:start_link(ChannelConfig),
+  Chan.
 
-  [{subscriber_channel1, {Sub1, Chan1}}, {subscriber_channel2, {Sub2, Chan2}} | Config].
 
 
 
 end_per_testcase(init_close_test, _Config) -> ok;
 
 end_per_testcase(send_receive_test, Config) ->
-  Pid = ?config(channel, Config),
-  channel_rabbitmq:stop(Pid),
-  ok;
+  terminate_channel([?config(channel, Config)]);
 
-end_per_testcase(send_receive_multi_test, _Config) -> ok;
+end_per_testcase(send_receive_multi_test, Config) ->
+  terminate_channel([?config(channel1, Config), ?config(channel2, Config)]);
 
-end_per_testcase(send_receive_multi_diff_test, _Config) -> ok.
+end_per_testcase(send_receive_multi_diff_test, Config) ->
+  terminate_channel([?config(channel1, Config), ?config(channel2, Config)]).
+
+terminate_channel(ChannelList) -> [channel_rabbitmq:stop(X) || X <- ChannelList].
 
 
 
@@ -105,8 +106,9 @@ send_receive_test(Config) ->
   true = lists:member(<<"Test">>, Buff).
 
 send_receive_multi_test(Config) ->
-  {Sub1, Channel} = ?config(subscriber_channel1, Config),
-  {Sub2, _Channel} = ?config(subscriber_channel2, Config),
+  Channel = ?config(channel1, Config),
+  Sub1 = ?config(subscriber1, Config),
+  Sub2 = ?config(subscriber2, Config),
   channel_rabbitmq:publish(Channel, <<"test_topic">>, <<"Test0">>),
   timer:sleep(500),
   {_, Buff1} = sys:get_state(Sub1),
@@ -115,14 +117,14 @@ send_receive_multi_test(Config) ->
   true = lists:member(<<"Test0">>, Buff2).
 
 send_receive_multi_diff_test(Config) ->
-  {Sub1, Channel} = ?config(subscriber_channel1, Config),
-  {Sub2, _Channel} = ?config(subscriber_channel2, Config),
+  Channel = ?config(channel1, Config),
+  Sub1 = ?config(subscriber1, Config),
+  Sub2 = ?config(subscriber2, Config),
   channel_rabbitmq:publish(Channel, <<"test_topic1">>, <<"Test1">>),
   channel_rabbitmq:publish(Channel, <<"test_topic2">>, <<"Test2">>),
   timer:sleep(500),
   {_, Buff1} = sys:get_state(Sub1),
   {_, Buff2} = sys:get_state(Sub2),
-  ct:print("Buff1 ~p", [Buff1]),
   true = lists:member(<<"Test1">>, Buff1),
   false = lists:member(<<"Test2">>, Buff1),
   true = lists:member(<<"Test2">>, Buff2),
