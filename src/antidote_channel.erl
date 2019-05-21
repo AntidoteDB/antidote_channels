@@ -68,12 +68,12 @@
 start_link(Mod, Config) ->
   gen_server:start_link(?MODULE, [Mod, Config], []).
 
--spec publish_async(Pid :: pid(), Topic :: binary(), Msg :: string()) -> ok.
+-spec publish_async(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
 
 publish_async(Pid, Topic, Msg) ->
   gen_server:cast(Pid, {publish_async, Topic, Msg}).
 
--spec handle_subscription(Pid :: pid(), Msg :: string()) -> ok.
+-spec handle_subscription(Pid :: pid(), Msg :: term()) -> ok.
 
 handle_subscription(Pid, Msg) ->
   gen_server:call(Pid, {handle_subscription, Msg}).

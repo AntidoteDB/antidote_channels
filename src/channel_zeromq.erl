@@ -12,7 +12,7 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {namespace, topics, handler, context, pub, subs, current}).
+-record(channel_state, {namespace :: binary(), topics :: [binary()], handler :: pid(), context, pub, subs, current :: atom()}).
 
 %% API
 -export([start_link/1, publish/3, stop/1]).
@@ -27,9 +27,12 @@
 start_link(Config) ->
   antidote_channel:start_link(?MODULE, Config).
 
+
+-spec stop(Pid :: pid()) -> ok.
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
+-spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
 publish(Pid, Topic, Msg) ->
   antidote_channel:publish_async(Pid, Topic, term_to_binary(Msg)).
 
@@ -55,7 +58,7 @@ init_channel(#pub_sub_channel_config{
         ok = erlzmq:connect(Subscriber, ConnStringI),
         lists:foreach(
           fun(Topic) ->
-            TopicString = binary_join([Namespace, Topic], <<".">>),
+            TopicString = <<Namespace/binary, <<".">>/binary, Topic/binary>>,
             ok = erlzmq:setsockopt(Subscriber, subscribe, TopicString)
           end, Topics),
         [Subscriber | AddressList] end, [], Pubs),
@@ -80,7 +83,7 @@ init_channel(_Config) ->
   {error, bad_configuration}.
 
 publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = N} = State) ->
-  TopicString = binary_join([N, Topic], <<".">>),
+  TopicString = <<N/binary, <<".">>/binary, Topic/binary>>,
   ok = erlzmq:send(Channel, TopicString, [sndmore]),
   ok = erlzmq:send(Channel, Msg),
   {ok, State}.
@@ -123,18 +126,6 @@ event_for_message(_) -> {error, bad_request}.
 %%% Private Functions
 %%%===================================================================
 
--spec binary_join([binary()], binary()) -> binary().
-binary_join([], _Sep) ->
-  <<>>;
-binary_join([Part], _Sep) ->
-  Part;
-binary_join(List, Sep) ->
-  lists:foldr(fun(A, B) ->
-    if
-      bit_size(B) > 0 -> <<A/binary, Sep/binary, B/binary>>;
-      true -> A
-    end
-              end, <<>>, List).
 
 connection_string({Ip, Port}) ->
   IpString = case Ip of

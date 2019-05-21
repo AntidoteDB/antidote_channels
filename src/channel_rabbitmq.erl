@@ -27,9 +27,11 @@
 start_link(Config) ->
   antidote_channel:start_link(?MODULE, Config).
 
+-spec stop(Pid :: pid()) -> ok.
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
+-spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
 publish(Pid, Topic, Msg) ->
   antidote_channel:publish_async(Pid, Topic, Msg).
 
