@@ -72,20 +72,22 @@ init_channel(#pub_sub_channel_config{
 
   case Res of
     {ok, P} ->
-      Subs = connect_to_publishers(Pubs, Namespace, Topics, Context),
-
-      %%Need to send a message to the socket so it starts working
-      %%TODO: find another way to ensure it starts
-      erlzmq:send(P, <<"init">>),
-      timer:sleep(500),
-
+      SubsRet = case P of
+                  undefined -> [];
+                  _ ->
+                    Subs = connect_to_publishers(Pubs, Namespace, Topics, Context),
+                    %%TODO: find another way to ensure socket starts
+                    erlzmq:send(P, <<"init">>),
+                    timer:sleep(500),
+                    Subs
+                end,
       {ok, #channel_state{
         pub = P,
         context = Context,
         handler = Process,
         namespace = Namespace,
         topics = Topics,
-        subs = Subs,
+        subs = SubsRet,
         current = waiting
       }};
     {{error, _} = E, _} -> E;
