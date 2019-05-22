@@ -19,6 +19,16 @@
 -export([init_channel/1, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
 
 
+-ifndef(TEST).
+-define(LOG_INFO(X), logger:info(X)).
+-endif.
+
+-ifdef(TEST).
+-define(LOG_INFO(X, Y), ct:print(X, Y)).
+-define(LOG_INFO(X), ct:print(X)).
+-endif.
+
+
 -spec start_link(Config :: channel_config()) ->
   {ok, Pid :: atom()} |
   ignore |
@@ -52,18 +62,8 @@ init_channel(#pub_sub_channel_config{
   Res = erlzmq:bind(Publisher, ConnString),
   case Res of
     ok ->
-      Subs = lists:foldl(fun(Address, AddressList) ->
-        {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
-        ConnStringI = connection_string(Address),
-        ok = erlzmq:connect(Subscriber, ConnStringI),
-        lists:foreach(
-          fun(Topic) ->
-            TopicString = <<Namespace/binary, <<".">>/binary, Topic/binary>>,
-            ok = erlzmq:setsockopt(Subscriber, subscribe, TopicString)
-          end, Topics),
-        [Subscriber | AddressList] end, [], Pubs),
-
-%%Need to send a message to the socket so it starts working
+      Subs = connect_to_publishers(Pubs, Namespace, Topics, Context),
+      %%Need to send a message to the socket so it starts working
       erlzmq:send(Publisher, <<"init">>),
       timer:sleep(500),
       {ok, #channel_state{
@@ -82,20 +82,27 @@ init_channel(#pub_sub_channel_config{
 init_channel(_Config) ->
   {error, bad_configuration}.
 
-publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = N} = State) ->
-  TopicString = <<N/binary, <<".">>/binary, Topic/binary>>,
-  ok = erlzmq:send(Channel, TopicString, [sndmore]),
+publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
+  TopicBinary = getTopicBinary(Namespace, Topic),
+  ok = erlzmq:send(Channel, TopicBinary, [sndmore]),
   ok = erlzmq:send(Channel, Msg),
   {ok, State}.
 
+handle_subscription(#message{payload = {zmq, _Socket, _, [rcvmore]}}, #channel_state{namespace = <<>>, topics = [], current = waiting} = State) ->
+  {ok, State#channel_state{current = receiving}};
+
+handle_subscription(#message{payload = {zmq, _Socket, Namespace, [rcvmore]}}, #channel_state{namespace = Namespace, topics = [], current = waiting} = State) ->
+  {ok, State#channel_state{current = receiving}};
+
 handle_subscription(#message{payload = {zmq, _Socket, NamespaceTopic, [rcvmore]}}, #channel_state{namespace = N, topics = T, current = waiting} = State) ->
-  case string:split(NamespaceTopic, ".") of
-    [Namespace, Topic] when Namespace == N ->
+  case getTopicTerm(NamespaceTopic) of
+    {ok, {Namespace, Topic}} when Namespace == N ->
       case lists:member(Topic, T) of
         true -> {ok, State#channel_state{current = receiving}};
+        false when T == [] -> {ok, State#channel_state{current = receiving}};
         false -> {ok, State}
       end;
-    _ -> {ok, State}
+    _ -> ?LOG_INFO("Received non-subscribed topic. Ignoring ~p.", [NamespaceTopic]), {ok, State}
   end;
 
 handle_subscription(#message{payload = {zmq, _Socket, Msg, [rcvmore]}}, #channel_state{handler = S, current = receiving} = State) ->
@@ -107,7 +114,7 @@ handle_subscription(#message{payload = {zmq, _Socket, Msg, _Flags}}, #channel_st
   {ok, State#channel_state{current = waiting}};
 
 handle_subscription(Msg, State) ->
-  logger:info("Unhandled Message ~p", [Msg]),
+  ?LOG_INFO("Unhandled Message ~p", [Msg]),
   {ok, State}.
 
 
@@ -126,6 +133,24 @@ event_for_message(_) -> {error, bad_request}.
 %%% Private Functions
 %%%===================================================================
 
+connect_to_publishers(Pubs, Namespace, Topics, Context) ->
+  lists:foldl(fun(Address, AddressList) ->
+    {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
+    ConnStringI = connection_string(Address),
+    ok = erlzmq:connect(Subscriber, ConnStringI),
+    case Topics of
+      [] when Namespace == <<>> ->
+        ok = erlzmq:setsockopt(Subscriber, subscribe, <<>>);
+      [] ->
+        ok = erlzmq:setsockopt(Subscriber, subscribe, Namespace);
+      _ -> lists:foreach(
+        fun(Topic) ->
+          TopicBinary = getTopicBinary(Namespace, Topic),
+          ok = erlzmq:setsockopt(Subscriber, subscribe, TopicBinary)
+        end, Topics)
+    end,
+
+    [Subscriber | AddressList] end, [], Pubs).
 
 connection_string({Ip, Port}) ->
   IpString = case Ip of
@@ -133,3 +158,26 @@ connection_string({Ip, Port}) ->
                _ -> inet_parse:ntoa(Ip)
              end,
   lists:flatten(io_lib:format("tcp://~s:~p", [IpString, Port])).
+
+
+getTopicBinary(<<>>, <<>>) ->
+  <<>>;
+getTopicBinary(undefined, Topic) ->
+  <<<<".">>/binary, Topic/binary>>;
+getTopicBinary(<<>>, Topic) ->
+  <<<<".">>/binary, Topic/binary>>;
+getTopicBinary(Namespace, undefined) ->
+  <<Namespace/binary>>;
+getTopicBinary(Namespace, <<>>) ->
+  <<Namespace/binary>>;
+getTopicBinary(Namespace, Topic) ->
+  <<Namespace/binary, <<".">>/binary, Topic/binary>>.
+
+
+getTopicTerm(NamespaceTopic) ->
+  case string:split(NamespaceTopic, ".") of
+    [Namespace, Topic] -> {ok, {<<Namespace/binary>>, <<Topic/binary>>}};
+    [Namespace] -> {ok, {<<Namespace/binary>>, <<>>}};
+    [[], Topic] -> {ok, {<<>>, <<Topic/binary>>}};
+    _ -> {error, wrong_format}
+  end.

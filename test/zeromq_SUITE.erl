@@ -2,9 +2,25 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("antidote_channel.hrl").
 
--export([groups/0, all/0, init_per_testcase/2, end_per_testcase/2, init_per_group/2, end_per_group/2]).
--export([init_close_test/1, bind_exception_test/1, send_receive_test/1, send_receive_multi_test/1, send_receive_multi_diff_test/1, send_receive_multi_topics/1]).
+-export([
+  groups/0,
+  all/0,
+  init_per_testcase/2,
+  end_per_testcase/2,
+  init_per_group/2,
+  end_per_group/2
+]).
 
+-export([
+  init_close_test/1,
+  bind_exception_test/1,
+  send_receive_test/1,
+  send_receive_multi_test/1,
+  send_receive_multi_diff_test/1,
+  send_receive_multi_topics/1,
+  send_receive_nonamespace_test/1,
+  send_receive_nonamespace_notopic_test/1
+]).
 
 groups() -> [
   {multiple_subscribers, [], [
@@ -17,6 +33,8 @@ all() -> [
   init_close_test,
   bind_exception_test,
   send_receive_test,
+  send_receive_nonamespace_test,
+  send_receive_nonamespace_notopic_test,
   {group, multiple_subscribers}
 ].
 
@@ -50,6 +68,18 @@ init_per_testcase(send_receive_test, Config) ->
   Chan = initChannel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
+init_per_testcase(send_receive_nonamespace_test, Config) ->
+  {ok, Sub} = basic_consumer:start_link(),
+  CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<>>, topics = [<<"test_topic">>], subscriber = Sub},
+  Chan = initChannel(CConfig),
+  [{subscriber, Sub}, {channel, Chan} | Config];
+
+init_per_testcase(send_receive_nonamespace_notopic_test, Config) ->
+  {ok, Sub} = basic_consumer:start_link(),
+  CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<>>, subscriber = Sub},
+  Chan = initChannel(CConfig),
+  [{subscriber, Sub}, {channel, Chan} | Config];
+
 init_per_testcase(send_receive_multi_test, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>],
     network_params = #zmq_params{port = 7866, pubAddresses = [{{127, 0, 0, 1}, 7866}]}
@@ -77,7 +107,7 @@ init_per_testcase(send_receive_multi_topics, Config) ->
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"multi_topic1">>, <<"multi_topic2">>],
     network_params = #zmq_params{port = 7867, pubAddresses = [{{127, 0, 0, 1}, 7866}]}},
   Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber1, Config),
+  Chan2 = initChannel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config].
 
 
@@ -98,6 +128,12 @@ end_per_testcase(bind_exception_test, _Config) -> ok;
 end_per_testcase(send_receive_test, Config) ->
   terminate_channel([?config(channel, Config)]);
 
+end_per_testcase(send_receive_nonamespace_test, Config) ->
+  terminate_channel([?config(channel, Config)]);
+
+end_per_testcase(send_receive_nonamespace_notopic_test, Config) ->
+  terminate_channel([?config(channel, Config)]);
+
 end_per_testcase(send_receive_multi_test, Config) ->
   terminate_channel([?config(channel1, Config), ?config(channel2, Config)]);
 
@@ -113,7 +149,11 @@ terminate_channel(ChannelList) -> [channel_zeromq:stop(X) || X <- ChannelList].
 
 init_close_test(_Config) ->
   {ok, Pid1} = basic_consumer:start_link(),
-  CConfig = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>], namespace = <<"test_env">>, subscriber = Pid1},
+  CConfig = ?PUB_SUB#pub_sub_channel_config{
+    topics = [<<"test_topic">>],
+    namespace = <<"test_env">>,
+    subscriber = Pid1
+  },
   {ok, Pid2} = channel_zeromq:start_link(CConfig),
   ok = channel_zeromq:stop(Pid2).
 
@@ -123,7 +163,11 @@ bind_exception_test(_Config) ->
   {ok, Socket} = erlzmq:socket(Ctx, pub),
   erlzmq:bind(Socket, "tcp://*:" ++ integer_to_list(?PORT)),
   {ok, Pid1} = basic_consumer:start_link(),
-  CConfig = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>], namespace = <<"test_env">>, subscriber = Pid1},
+  CConfig = ?PUB_SUB#pub_sub_channel_config{
+    topics = [<<"test_topic">>],
+    namespace = <<"test_env">>,
+    subscriber = Pid1
+  },
   {error, eaddrinuse} = channel_zeromq:start_link(CConfig),
   erlzmq:close(Socket).
 
@@ -131,6 +175,24 @@ send_receive_test(Config) ->
   Channel = ?config(channel, Config),
   Subscriber = ?config(subscriber, Config),
   channel_zeromq:publish(Channel, <<"test_topic">>, <<"Test">>),
+  timer:sleep(2000),
+  {_, Buff} = sys:get_state(Subscriber),
+  true = lists:member(<<"Test">>, Buff),
+  false = lists:member(<<"init">>, Buff).
+
+send_receive_nonamespace_test(Config) ->
+  Channel = ?config(channel, Config),
+  Subscriber = ?config(subscriber, Config),
+  channel_zeromq:publish(Channel, <<"test_topic">>, <<"Test">>),
+  timer:sleep(2000),
+  {_, Buff} = sys:get_state(Subscriber),
+  true = lists:member(<<"Test">>, Buff),
+  false = lists:member(<<"init">>, Buff).
+
+send_receive_nonamespace_notopic_test(Config) ->
+  Channel = ?config(channel, Config),
+  Subscriber = ?config(subscriber, Config),
+  channel_zeromq:publish(Channel, <<>>, <<"Test">>),
   timer:sleep(2000),
   {_, Buff} = sys:get_state(Subscriber),
   true = lists:member(<<"Test">>, Buff),
@@ -163,7 +225,7 @@ send_receive_multi_diff_test(Config) ->
 
 send_receive_multi_topics(Config) ->
   Channel = ?config(channel1, Config),
-  Sub = ?config(subscriber1, Config),
+  Sub = ?config(subscriber2, Config),
   channel_zeromq:publish(Channel, <<"multi_topic1">>, <<"multi_topic1">>),
   channel_zeromq:publish(Channel, <<"multi_topic2">>, <<"multi_topic2">>),
   channel_zeromq:publish(Channel, <<"multi_topic3">>, <<"multi_topic3">>),

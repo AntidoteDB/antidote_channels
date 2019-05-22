@@ -31,6 +31,7 @@
 -define(DEFAULT_ZMQ_PORT, 8086).
 
 -record(message, {payload}).
+
 -record(pub_sub_channel_config, {
   topics = [] :: [binary()],
   namespace = <<"default">> :: binary(),
@@ -38,11 +39,27 @@
   subscriber :: pid()
 }).
 
+-record(pub_channel_config, {
+  namespace = <<"default">> :: binary(),
+  network_params :: term()
+  %% TODO: rpc = false :: boolean() % Use true to force process to wait for a response
+}).
+
 -record(zmq_params, {
   host = "*",
   port = ?DEFAULT_ZMQ_PORT,
   pubAddresses = []
 }).
+
+-record(pub_zmq_params, {
+  host = "*",
+  port = ?DEFAULT_ZMQ_PORT
+}).
+
+-record(sub_zmq_params, {
+  publishers = []
+}).
+
 
 -record(amqp_params, {
   username = <<"guest">>,
