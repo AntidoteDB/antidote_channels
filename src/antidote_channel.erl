@@ -30,7 +30,7 @@
 -include_lib("antidote_channel.hrl").
 
 %% API
--export([start_link/2, publish_async/3, handle_subscription/2, stop/1]).
+-export([start_link/2, publish_async/3, add_subscriptions/2, handle_subscription/2, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -52,6 +52,8 @@
 
 -callback publish_async(Topic :: binary(), Msg :: message(), State :: channel_state()) -> {ok, State :: channel_state()}.
 
+-callback add_subscriptions(Topics :: [binary()], State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
+
 -callback handle_subscription(Msg :: message(), State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
 -callback event_for_message(Info :: term()) -> {ok, event()} | {error, Reason :: atom()}.
@@ -72,6 +74,11 @@ start_link(Mod, Config) ->
 
 publish_async(Pid, Topic, Msg) ->
   gen_server:cast(Pid, {publish_async, Topic, Msg}).
+
+-spec add_subscriptions(Pid :: pid(), Topics :: [binary()]) -> ok.
+
+add_subscriptions(Pid, Topics) ->
+  gen_server:cast(Pid, {add_subscriptions, Topics}).
 
 -spec handle_subscription(Pid :: pid(), Msg :: term()) -> ok.
 
@@ -115,6 +122,11 @@ handle_call(_, _, State) -> {noreply, State}.
   {noreply, NewState :: state()} |
   {noreply, NewState :: state(), timeout() | hibernate | {continue, term()}} |
   {stop, Reason :: term(), NewState :: state()}.
+
+
+handle_cast({add_subscriptions, Topics}, #state{module = Mod, channel_state = S} = State) ->
+  {ok, S1} = Mod:add_subscriptions(Topics, S),
+  {noreply, State#state{channel_state = S1}};
 
 handle_cast({publish_async, Topic, Msg}, #state{module = Mod, channel_state = S} = State) ->
   {ok, S1} = Mod:publish_async(Topic, Msg, S),

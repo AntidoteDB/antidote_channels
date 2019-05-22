@@ -16,7 +16,7 @@
 
 %% API
 -export([start_link/1, publish/3, stop/1]).
--export([init_channel/1, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
+-export([init_channel/1, add_subscriptions/2, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
 
 
 -ifndef(TEST).
@@ -96,12 +96,17 @@ init_channel(#pub_sub_channel_config{
 init_channel(_Config) ->
   {error, bad_configuration}.
 
+add_subscriptions(Topics, #channel_state{subs = Subs, namespace = Namespace} = State) ->
+  lists:foreach(fun(Sub) ->
+    subscribe_topics(Sub, Namespace, Topics) end, Subs),
+  {ok, State}.
+
 publish_async(_Topic, _Msg, #channel_state{pub = undefined} = State) ->
   {{error, no_publisher}, State};
 
 publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
   TopicBinary = getTopicBinary(Namespace, Topic),
-  %Need to check if sending two separate messages affects performance
+%Need to check if sending two separate messages affects performance
   ok = erlzmq:send(Channel, TopicBinary, [sndmore]),
   ok = erlzmq:send(Channel, term_to_binary(Msg)),
   {ok, State}.
@@ -156,18 +161,22 @@ connect_to_publishers(Pubs, Namespace, Topics, Context) ->
     {ok, Subscriber} = erlzmq:socket(Context, [sub, {active, true}]),
     ConnStringI = connection_string(Address),
     ok = erlzmq:connect(Subscriber, ConnStringI),
-    case Topics of
-      [] when Namespace == <<>> ->
-        ok = erlzmq:setsockopt(Subscriber, subscribe, <<>>);
-      [] ->
-        ok = erlzmq:setsockopt(Subscriber, subscribe, Namespace);
-      _ -> lists:foreach(
-        fun(Topic) ->
-          TopicBinary = getTopicBinary(Namespace, Topic),
-          ok = erlzmq:setsockopt(Subscriber, subscribe, TopicBinary)
-        end, Topics)
-    end,
+    subscribe_topics(Subscriber, Namespace, Topics),
     [Subscriber | AddressList] end, [], Pubs).
+
+
+subscribe_topics(Subscriber, Namespace, Topics) ->
+  case Topics of
+    [] when Namespace == <<>> ->
+      ok = erlzmq:setsockopt(Subscriber, subscribe, <<>>);
+    [] ->
+      ok = erlzmq:setsockopt(Subscriber, subscribe, Namespace);
+    _ -> lists:foreach(
+      fun(Topic) ->
+        TopicBinary = getTopicBinary(Namespace, Topic),
+        ok = erlzmq:setsockopt(Subscriber, subscribe, TopicBinary)
+      end, Topics)
+  end.
 
 connection_string({Ip, Port}) ->
   IpString = case Ip of

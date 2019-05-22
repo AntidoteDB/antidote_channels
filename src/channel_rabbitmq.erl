@@ -16,7 +16,7 @@
 
 %% API
 -export([start_link/1, publish/3, stop/1]).
--export([init_channel/1, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
+-export([init_channel/1, publish_async/3, add_subscriptions/2, handle_subscription/2, event_for_message/1, terminate/2]).
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), ct:print(X, Y)).
@@ -104,6 +104,8 @@ init_channel(#pub_sub_channel_config{
 
 init_channel(_Config) ->
   {error, bad_configuration}.
+
+add_subscriptions(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
 
 publish_async(Topic, Msg, #channel_state{channel = Channel, exchange = Exchange} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
