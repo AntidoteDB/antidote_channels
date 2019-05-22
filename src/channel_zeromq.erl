@@ -45,7 +45,7 @@ stop(Pid) ->
 
 -spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
 publish(Pid, Topic, Msg) ->
-  antidote_channel:publish_async(Pid, Topic, term_to_binary(Msg)).
+  antidote_channel:publish_async(Pid, Topic, Msg).
 
 %%TODO: Create supervisor for channels?
 init_channel(#pub_sub_channel_config{
@@ -80,13 +80,14 @@ init_channel(#pub_sub_channel_config{
     Error -> Error
   end;
 
+
 init_channel(_Config) ->
   {error, bad_configuration}.
 
 publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
   TopicBinary = getTopicBinary(Namespace, Topic),
   ok = erlzmq:send(Channel, TopicBinary, [sndmore]),
-  ok = erlzmq:send(Channel, Msg),
+  ok = erlzmq:send(Channel, term_to_binary(Msg)),
   {ok, State}.
 
 handle_subscription(#message{payload = {zmq, _Socket, _, [rcvmore]}}, #channel_state{namespace = <<>>, topics = [], current = waiting} = State) ->
@@ -110,7 +111,7 @@ handle_subscription(#message{payload = {zmq, _Socket, Msg, [rcvmore]}}, #channel
   ok = gen_server:call(S, binary_to_term(Msg)),
   {ok, State};
 
-handle_subscription(#message{payload = {zmq, _Socket, Msg, _Flags}}, #channel_state{handler = S, current = receiving} = State) ->
+handle_subscription(#message{payload = {zmq, _Socket, Msg, _Flags}}, #channel_state{handler = S} = State) ->
   ok = gen_server:call(S, binary_to_term(Msg)),
   {ok, State#channel_state{current = waiting}};
 
