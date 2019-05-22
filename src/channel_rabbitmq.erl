@@ -19,6 +19,7 @@
 -export([init_channel/1, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
 
 -ifndef(TEST).
+-define(LOG_INFO(X, Y), ct:print(X, Y)).
 -define(LOG_INFO(X), logger:info(X)).
 -endif.
 

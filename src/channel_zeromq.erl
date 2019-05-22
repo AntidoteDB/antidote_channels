@@ -20,6 +20,7 @@
 
 
 -ifndef(TEST).
+-define(LOG_INFO(X, Y), ct:print(X, Y)).
 -define(LOG_INFO(X), logger:info(X)).
 -endif.
 
