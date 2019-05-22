@@ -46,9 +46,9 @@
 }).
 
 -record(zmq_params, {
-  host = "*",
-  port = ?DEFAULT_ZMQ_PORT,
-  pubAddresses = []
+  pubHost = "*",
+  pubPort,
+  publishersAddresses = []
 }).
 
 -record(pub_zmq_params, {

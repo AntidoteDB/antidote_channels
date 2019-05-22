@@ -126,15 +126,16 @@ handle_cast({publish_async, Topic, Msg}, #state{module = Mod, channel_state = S}
   {stop, Reason :: term(), NewState :: state()}.
 
 handle_info(Info, #state{module = Mod} = State) ->
-  State2 =
-    case Mod:event_for_message(Info) of
-      {ok, do_nothing} -> State;
-      {ok, Event} ->
-        {ok, State1} = handle_message(Event, Info, State), State1;
-      _ ->
-        logger:info("Unknown message received ~p", [Info]), State
-    end,
-  {noreply, State2}.
+  case Mod:event_for_message(Info) of
+    {ok, do_nothing} -> State;
+    {ok, Event} ->
+      case handle_message(Event, Info, State) of
+        {ok, State1} -> {noreply, State1};
+        {{error, _} = Error, State} -> {stop, Error, State}
+      end;
+    _ ->
+      logger:info("Unknown message received ~p", [Info]), {noreply, State}
+  end.
 
 -spec handle_message(Event :: event(), Msg :: message(), State :: state()) ->
   {ok, NewState :: state()}.

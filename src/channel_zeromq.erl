@@ -52,37 +52,52 @@ init_channel(#pub_sub_channel_config{
   topics = Topics,
   namespace = Namespace,
   network_params = #zmq_params{
-    port = Port,
-    pubAddresses = Pubs
+    pubHost = Host,
+    pubPort = Port,
+    publishersAddresses = Pubs
   },
   subscriber = Process}
 ) ->
   {ok, Context} = erlzmq:context(),
-  {ok, Publisher} = erlzmq:socket(Context, pub),
-  ConnString = connection_string({"*", Port}),
-  Res = erlzmq:bind(Publisher, ConnString),
+
+  Res =
+    case Port of
+      undefined -> {ok, undefined};
+      _ ->
+        {ok, Publisher} = erlzmq:socket(Context, pub),
+        ConnString = connection_string({Host, Port}),
+        Bind = erlzmq:bind(Publisher, ConnString),
+        {Bind, Publisher}
+    end,
+
   case Res of
-    ok ->
+    {ok, P} ->
       Subs = connect_to_publishers(Pubs, Namespace, Topics, Context),
+
       %%Need to send a message to the socket so it starts working
-      erlzmq:send(Publisher, <<"init">>),
+      %%TODO: find another way to ensure it starts
+      erlzmq:send(P, <<"init">>),
       timer:sleep(500),
+
       {ok, #channel_state{
-        pub = Publisher,
+        pub = P,
         context = Context,
         handler = Process,
         namespace = Namespace,
         topics = Topics,
         subs = Subs,
         current = waiting
-      }
-      };
+      }};
+    {{error, _} = E, _} -> E;
     Error -> Error
   end;
 
 
 init_channel(_Config) ->
   {error, bad_configuration}.
+
+publish_async(_Topic, _Msg, #channel_state{pub = undefined} = State) ->
+  {{error, no_publisher}, State};
 
 publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
   TopicBinary = getTopicBinary(Namespace, Topic),
@@ -152,7 +167,6 @@ connect_to_publishers(Pubs, Namespace, Topics, Context) ->
           ok = erlzmq:setsockopt(Subscriber, subscribe, TopicBinary)
         end, Topics)
     end,
-
     [Subscriber | AddressList] end, [], Pubs).
 
 connection_string({Ip, Port}) ->

@@ -40,7 +40,7 @@ all() -> [
 
 -define(PORT, 7866).
 -define(PUB_SUB, #pub_sub_channel_config{
-  network_params = #zmq_params{port = ?PORT, pubAddresses = [{{127, 0, 0, 1}, ?PORT}]},
+  network_params = #zmq_params{pubPort = ?PORT, publishersAddresses = [{{127, 0, 0, 1}, ?PORT}]},
   namespace = <<"test_env">>
 }).
 
@@ -82,20 +82,20 @@ init_per_testcase(send_receive_nonamespace_notopic_test, Config) ->
 
 init_per_testcase(send_receive_multi_test, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>],
-    network_params = #zmq_params{port = 7866, pubAddresses = [{{127, 0, 0, 1}, 7866}]}
+    network_params = #zmq_params{pubPort = 7866, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}
   },
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>],
-    network_params = #zmq_params{port = 7867, pubAddresses = [{{127, 0, 0, 1}, 7866}]}},
+    network_params = #zmq_params{pubPort = 7867, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}},
   Chan1 = initChannel(CConfig1, subscriber1, Config),
   Chan2 = initChannel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_diff_test, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic1">>],
-    network_params = #zmq_params{port = 7866, pubAddresses = [{{127, 0, 0, 1}, 7866}]}
+    network_params = #zmq_params{pubPort = 7866, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}
   },
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic2">>],
-    network_params = #zmq_params{port = 7867, pubAddresses = [{{127, 0, 0, 1}, 7866}]}
+    network_params = #zmq_params{pubPort = 7867, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}
   },
   Chan1 = initChannel(CConfig1, subscriber1, Config),
   Chan2 = initChannel(CConfig2, subscriber2, Config),
@@ -103,9 +103,9 @@ init_per_testcase(send_receive_multi_diff_test, Config) ->
 
 init_per_testcase(send_receive_multi_topics, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{
-    network_params = #zmq_params{port = 7866, pubAddresses = [{{127, 0, 0, 1}, 7866}]}},
+    network_params = #zmq_params{pubPort = 7866, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}},
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"multi_topic1">>, <<"multi_topic2">>],
-    network_params = #zmq_params{port = 7867, pubAddresses = [{{127, 0, 0, 1}, 7866}]}},
+    network_params = #zmq_params{pubPort = 7867, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}},
   Chan1 = initChannel(CConfig1, subscriber1, Config),
   Chan2 = initChannel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config].
