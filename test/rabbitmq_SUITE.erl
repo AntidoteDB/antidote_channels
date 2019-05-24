@@ -24,9 +24,11 @@ all() -> [
 
 
 -define(PORT, 5672).
--define(PUB_SUB, #pub_sub_channel_config{
-  namespace = <<"test_env">>,
-  network_params = #amqp_params{port = ?PORT}
+-define(PUB_SUB, #{
+  module => channel_rabbitmq,
+  pattern => pub_sub,
+  namespace => <<"test_env">>,
+  network_params => #{port => ?PORT}
 }).
 
 
@@ -49,53 +51,53 @@ init_per_testcase(init_close_test, Config) -> Config;
 
 init_per_testcase(send_receive_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
-  CConfig = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>], subscriber = Sub},
+  CConfig = ?PUB_SUB#{topics => [<<"test_topic">>], subscriber => Sub},
   Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_nonamespace_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
-  CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<"any">>, topics = [<<"test_topic">>], subscriber = Sub},
+  CConfig = ?PUB_SUB#{namespace => <<"any">>, topics => [<<"test_topic">>], subscriber => Sub},
   Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_notopic_test, Config) ->
   {ok, Sub1} = basic_consumer:start_link(),
   {ok, Sub2} = basic_consumer:start_link(),
-  CConfig1 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"antidote_fanout">>, topics = [], subscriber = Sub1},
-  CConfig2 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"antidote_fanout">>, topics = [], subscriber = Sub2},
+  CConfig1 = ?PUB_SUB#{namespace => <<"antidote_fanout">>, topics => [], subscriber => Sub1},
+  CConfig2 = ?PUB_SUB#{namespace => <<"antidote_fanout">>, topics => [], subscriber => Sub2},
   Chan1 = init_channel(CConfig1),
   Chan2 = init_channel(CConfig2),
   [{subscriber1, Sub1}, {subscriber2, Sub2}, {channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_test, Config) ->
-  CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>]},
-  CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>]},
+  CConfig1 = ?PUB_SUB#{topics => [<<"test_topic">>]},
+  CConfig2 = ?PUB_SUB#{topics => [<<"test_topic">>]},
   Chan1 = init_channel(CConfig1, subscriber1, Config),
   Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_diff_test, Config) ->
-  CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic1">>]},
-  CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic2">>]},
+  CConfig1 = ?PUB_SUB#{topics => [<<"test_topic1">>]},
+  CConfig2 = ?PUB_SUB#{topics => [<<"test_topic2">>]},
   Chan1 = init_channel(CConfig1, subscriber1, Config),
   Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_topics, Config) ->
-  CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"other_topic">>]},
-  CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"multi_topic1">>, <<"multi_topic2">>]},
+  CConfig1 = ?PUB_SUB#{topics => [<<"other_topic">>]},
+  CConfig2 = ?PUB_SUB#{topics => [<<"multi_topic1">>, <<"multi_topic2">>]},
   Chan1 = init_channel(CConfig1, subscriber1, Config),
   Chan2 = init_channel(CConfig2, subscriber1, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config].
 
 init_channel(ChannelConfig, SubscriberName, TestConfig) ->
   Sub = ?config(SubscriberName, TestConfig),
-  CConfig = ChannelConfig#pub_sub_channel_config{subscriber = Sub},
+  CConfig = ChannelConfig#{subscriber => Sub},
   init_channel(CConfig).
 
 init_channel(ChannelConfig) ->
-  {ok, Chan} = channel_rabbitmq:start_link(ChannelConfig),
+  {ok, Chan} = antidote_channel:start_link(ChannelConfig),
   Chan.
 
 
@@ -121,7 +123,7 @@ end_per_testcase(send_receive_multi_diff_test, Config) ->
 end_per_testcase(send_receive_multi_topics, Config) ->
   terminate_channel([?config(channel1, Config), ?config(channel2, Config)]).
 
-terminate_channel(ChannelList) -> [channel_rabbitmq:stop(X) || X <- ChannelList].
+terminate_channel(ChannelList) -> [antidote_channel:stop(X) || X <- ChannelList].
 
 
 
@@ -129,14 +131,14 @@ terminate_channel(ChannelList) -> [channel_rabbitmq:stop(X) || X <- ChannelList]
 
 init_close_test(_Config) ->
   {ok, Pid1} = basic_consumer:start_link(),
-  CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<"test_env">>, topics = [<<"test_topic">>], subscriber = Pid1},
-  {ok, Pid2} = channel_rabbitmq:start_link(CConfig),
-  ok = channel_rabbitmq:stop(Pid2).
+  CConfig = ?PUB_SUB#{namespace => <<"test_env">>, topics => [<<"test_topic">>], subscriber => Pid1},
+  {ok, Pid2} = antidote_channel:start_link(CConfig),
+  ok = antidote_channel:stop(Pid2).
 
 send_receive_test(Config) ->
   Channel = ?config(channel, Config),
   Subscriber = ?config(subscriber, Config),
-  channel_rabbitmq:publish(Channel, <<"test_topic">>, <<"Test">>),
+  antidote_channel:publish(Channel, <<"test_topic">>, <<"Test">>),
   timer:sleep(500),
   {_, Buff} = sys:get_state(Subscriber),
   true = lists:member(<<"Test">>, Buff).
@@ -145,7 +147,7 @@ send_receive_notopic_test(Config) ->
   Channel = ?config(channel1, Config),
   Subscriber1 = ?config(subscriber1, Config),
   Subscriber2 = ?config(subscriber2, Config),
-  channel_rabbitmq:publish(Channel, <<>>, <<"Test">>),
+  antidote_channel:publish(Channel, <<>>, <<"Test">>),
   timer:sleep(2000),
   {_, Buff1} = sys:get_state(Subscriber1),
   {_, Buff2} = sys:get_state(Subscriber2),
@@ -156,7 +158,7 @@ send_receive_notopic_test(Config) ->
 send_receive_nonamespace_test(Config) ->
   Channel = ?config(channel, Config),
   Subscriber = ?config(subscriber, Config),
-  channel_rabbitmq:publish(Channel, <<"test_topic">>, <<"Test">>),
+  antidote_channel:publish(Channel, <<"test_topic">>, <<"Test">>),
   timer:sleep(2000),
   {_, Buff} = sys:get_state(Subscriber),
   true = lists:member(<<"Test">>, Buff).
@@ -165,7 +167,7 @@ send_receive_multi_test(Config) ->
   Channel = ?config(channel1, Config),
   Sub1 = ?config(subscriber1, Config),
   Sub2 = ?config(subscriber2, Config),
-  channel_rabbitmq:publish(Channel, <<"test_topic">>, <<"Test0">>),
+  antidote_channel:publish(Channel, <<"test_topic">>, <<"Test0">>),
   timer:sleep(500),
   {_, Buff1} = sys:get_state(Sub1),
   {_, Buff2} = sys:get_state(Sub2),
@@ -176,8 +178,8 @@ send_receive_multi_diff_test(Config) ->
   Channel = ?config(channel1, Config),
   Sub1 = ?config(subscriber1, Config),
   Sub2 = ?config(subscriber2, Config),
-  channel_rabbitmq:publish(Channel, <<"test_topic1">>, <<"Test1">>),
-  channel_rabbitmq:publish(Channel, <<"test_topic2">>, <<"Test2">>),
+  antidote_channel:publish(Channel, <<"test_topic1">>, <<"Test1">>),
+  antidote_channel:publish(Channel, <<"test_topic2">>, <<"Test2">>),
   timer:sleep(500),
   {_, Buff1} = sys:get_state(Sub1),
   {_, Buff2} = sys:get_state(Sub2),
@@ -189,9 +191,9 @@ send_receive_multi_diff_test(Config) ->
 send_receive_multi_topics(Config) ->
   Channel = ?config(channel1, Config),
   Sub = ?config(subscriber1, Config),
-  channel_rabbitmq:publish(Channel, <<"multi_topic1">>, <<"multi_topic1">>),
-  channel_rabbitmq:publish(Channel, <<"multi_topic2">>, <<"multi_topic2">>),
-  channel_rabbitmq:publish(Channel, <<"multi_topic3">>, <<"multi_topic3">>),
+  antidote_channel:publish(Channel, <<"multi_topic1">>, <<"multi_topic1">>),
+  antidote_channel:publish(Channel, <<"multi_topic2">>, <<"multi_topic2">>),
+  antidote_channel:publish(Channel, <<"multi_topic3">>, <<"multi_topic3">>),
   timer:sleep(500),
   {_, Buff} = sys:get_state(Sub),
   true = lists:member(<<"multi_topic1">>, Buff),

@@ -30,7 +30,7 @@
 -include_lib("antidote_channel.hrl").
 
 %% API
--export([start_link/2, publish_async/3, add_subscriptions/2, handle_subscription/2, is_alive/2, stop/1]).
+-export([start_link/1, publish/3, add_subscriptions/2, handle_subscription/2, is_alive/2, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -60,21 +60,29 @@
 
 -callback is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
+-callback get_network_config(ConfigMap :: map()) -> State :: channel_state() | {error, Reason :: term()}.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
 
--spec start_link(Module :: atom(), Config :: channel_config()) ->
+-spec start_link(Config :: channel_config()) ->
   {ok, Pid :: pid()} |
   ignore |
   {error, Reason :: atom()}.
 
-start_link(Mod, Config) ->
-  gen_server:start_link(?MODULE, [Mod, Config], []).
+start_link(#{module := Mod} = ConfigMap) ->
+  case get_config(ConfigMap) of
+    {error, _} = E -> E;
+    Config -> gen_server:start_link(?MODULE, [Mod, Config], [])
+  end;
 
--spec publish_async(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
+start_link(_ConfigMap) ->
+  {error, bad_Configuration}.
 
-publish_async(Pid, Topic, Msg) ->
+-spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
+
+publish(Pid, Topic, Msg) ->
   gen_server:cast(Pid, {publish_async, Topic, Msg}).
 
 -spec add_subscriptions(Pid :: pid(), Topics :: [binary()]) -> ok.
@@ -96,6 +104,30 @@ is_alive(ChannelType, Address) ->
 
 stop(Pid) ->
   gen_server:stop(Pid).
+
+-spec get_config(ConfigMap :: map()) -> channel_config() | {error, Reason :: atom()}.
+get_config(#{module := Mod, pattern := Pattern, network_params := NetworkConfig} = Config0) ->
+  try
+    case Mod:get_network_config(Pattern, NetworkConfig) of
+      {error, _} = E -> E;
+      Config1 -> get_config(Pattern, Mod, Config0, Config1)
+    end
+  catch
+    Exception -> {error, Exception}
+  end.
+
+get_config(pub_sub, Mod, ConfigMap, NetworkConfig) ->
+  Default = #pub_sub_channel_config{},
+  Default#pub_sub_channel_config{
+    module = Mod,
+    topics = maps:get(topics, ConfigMap, Default#pub_sub_channel_config.topics),
+    namespace = maps:get(namespace, ConfigMap, Default#pub_sub_channel_config.namespace),
+    network_params = NetworkConfig,
+    subscriber = maps:get(subscriber, ConfigMap, Default#pub_sub_channel_config.subscriber)
+  };
+
+get_config(_Pattern, _Mod, _ConfigMap, _NetworkConfig) ->
+  {error, pattern_not_supported}.
 
 %%%===================================================================
 %%% gen_server callbacks

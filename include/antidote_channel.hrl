@@ -35,10 +35,11 @@
 -record(message, {payload}).
 
 -record(pub_sub_channel_config, {
+  module :: atom(),
   topics = [] :: [binary()],
   namespace = <<>> :: binary(),
   network_params :: term(),
-  subscriber :: pid()
+  subscriber :: pid() | undefined
 }).
 
 -record(pub_channel_config, {
@@ -53,28 +54,12 @@
   publishersAddresses = []
 }).
 
--record(pub_zmq_params, {
-  host = "*",
-  port = ?DEFAULT_ZMQ_PORT
-}).
-
--record(sub_zmq_params, {
-  publishers = []
-}).
-
-
--record(amqp_params, {
-  username = <<"guest">>,
-  password = <<"guest">>,
-  virtual_host = <<"/">>,
-  host = "localhost",
-  port = undefined
-}).
-
 -type channel() :: term().
--type channel_type() :: zeromq_channel | rabbitmq_channel.
--type channel_config() :: term().
-%% TODO: restrict possible types
+
+
+-type channel_type() :: atom(). %zeromq_channel | rabbitmq_channel
+-type channel_config() :: term(). %#amqp_params_network{} | #zmq_params{}.
+
 -type channel_state() :: term().
 
 -type message() :: #message{payload :: message_payload()}.

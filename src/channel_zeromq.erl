@@ -15,13 +15,13 @@
 -record(channel_state, {namespace :: binary(), topics :: [binary()], handler :: pid(), context, pub, subs, current :: atom()}).
 
 %% API
--export([start_link/1, publish/3, is_alive/2, stop/1]).
--export([init_channel/1, add_subscriptions/2, publish_async/3, handle_subscription/2, event_for_message/1, is_alive/1, terminate/2]).
+-export([start_link/1, publish/3, is_alive/2, get_network_config/2, stop/1]).
+-export([init_channel/1, add_subscriptions/2, publish_async/3, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
 
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
+-define(LOG_INFO(X), ct:print(X)).
 -endif.
 
 -ifdef(TEST).
@@ -39,12 +39,12 @@
   {error, Reason :: atom()}.
 
 start_link(Config) ->
-  antidote_channel:start_link(?MODULE, Config).
+  antidote_channel:start_link(Config#{module => channel_zeromq}).
 
 -spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
 
 publish(Pid, Topic, Msg) ->
-  antidote_channel:publish_async(Pid, Topic, Msg).
+  antidote_channel:publish(Pid, Topic, Msg).
 
 -spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
@@ -55,6 +55,24 @@ is_alive(zeromq_channel, Address) ->
 
 stop(Pid) ->
   antidote_channel:stop(Pid).
+
+-spec get_network_config(Pattern :: atom(), ConfigMap :: map()) -> #zmq_params{}.
+get_network_config(pub_sub, ConfigMap) ->
+  get_network_config(ConfigMap);
+
+get_network_config(_Other, _ConfigMap) ->
+  {error, pattern_not_supported}.
+
+
+-spec get_network_config(ConfigMap :: map()) -> #zmq_params{}.
+get_network_config(ConfigMap) ->
+  Default = #zmq_params{},
+  Default#zmq_params{
+    pubHost = maps:get(pubHost, ConfigMap, Default#zmq_params.pubHost),
+    pubPort = maps:get(pubPort, ConfigMap, Default#zmq_params.pubPort),
+    publishersAddresses = maps:get(publishersAddresses, ConfigMap, Default#zmq_params.publishersAddresses)
+  }.
+
 
 %%%===================================================================
 %%% Callbacks

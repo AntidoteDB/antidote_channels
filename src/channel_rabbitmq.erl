@@ -8,6 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(channel_rabbitmq).
 -include_lib("antidote_channel.hrl").
+-include_lib("common_test/include/ct.hrl").
 
 -behavior(antidote_channel).
 
@@ -15,12 +16,12 @@
 -record(channel_state, {channel, connection, exchange, handler, subscriber_tags}).
 
 %% API
--export([start_link/1, publish/3, is_alive/2, stop/1]).
--export([init_channel/1, publish_async/3, add_subscriptions/2, handle_subscription/2, event_for_message/1, is_alive/1, terminate/2]).
+-export([start_link/1, publish/3, is_alive/2, get_network_config/2, stop/1]).
+-export([init_channel/1, publish_async/3, add_subscriptions/2, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
+-define(LOG_INFO(X), ct:print(X)).
 -endif.
 
 -ifdef(TEST).
@@ -37,7 +38,7 @@
   {error, Reason :: atom()}.
 
 start_link(Config) ->
-  antidote_channel:start_link(?MODULE, Config).
+  antidote_channel:start_link(Config#{module => channel_rabbitmq}).
 
 -spec stop(Pid :: pid()) -> ok.
 stop(Pid) ->
@@ -45,10 +46,41 @@ stop(Pid) ->
 
 -spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
 publish(Pid, Topic, Msg) ->
-  antidote_channel:publish_async(Pid, Topic, Msg).
+  antidote_channel:publish(Pid, Topic, Msg).
 
 is_alive(rabbitmq_channel, Address) ->
   is_alive(Address).
+
+
+-spec get_network_config(Pattern :: atom(), ConfigMap :: map()) -> #amqp_params_network{}.
+get_network_config(pub_sub, ConfigMap) ->
+  get_network_config(ConfigMap);
+
+get_network_config(_Other, _ConfigMap) ->
+  {error, pattern_not_supported}.
+
+-spec get_network_config(ConfigMap :: map()) -> #amqp_params_network{}.
+get_network_config(ConfigMap) ->
+  Default = #amqp_params_network{},
+  Default#amqp_params_network{
+    username = maps:get(username, ConfigMap, Default#amqp_params_network.username),
+    password = maps:get(password, ConfigMap, Default#amqp_params_network.password),
+    virtual_host = maps:get(virtual_host, ConfigMap, Default#amqp_params_network.virtual_host),
+    host = maps:get(host, ConfigMap, Default#amqp_params_network.host),
+    port = maps:get(port, ConfigMap, Default#amqp_params_network.port),
+    channel_max = maps:get(port, ConfigMap, Default#amqp_params_network.channel_max),
+    frame_max = maps:get(port, ConfigMap, Default#amqp_params_network.frame_max),
+    heartbeat = maps:get(port, ConfigMap, Default#amqp_params_network.heartbeat),
+    connection_timeout = maps:get(port, ConfigMap, Default#amqp_params_network.connection_timeout),
+    ssl_options = maps:get(ssl_options, ConfigMap, Default#amqp_params_network.ssl_options),
+    % List of functions
+    auth_mechanisms = maps:get(auth_mechanisms, ConfigMap, Default#amqp_params_network.auth_mechanisms),
+    % List
+    client_properties = maps:get(client_properties, ConfigMap, Default#amqp_params_network.client_properties),
+    % List
+    socket_options = maps:get(socket_options, ConfigMap, Default#amqp_params_network.socket_options)
+  }.
+
 
 %%%===================================================================
 %%% Callbacks
@@ -62,7 +94,7 @@ init_channel(#pub_sub_channel_config{topics = [], namespace = <<>>}) ->
 init_channel(#pub_sub_channel_config{
   topics = Topics,
   namespace = Namespace0,
-  network_params = #amqp_params{username = U, password = Pass, virtual_host = _V, host = H, port = Port},
+  network_params = #amqp_params_network{} = NetworkParams,
   subscriber = Process}
 ) ->
   Namespace =
@@ -71,7 +103,6 @@ init_channel(#pub_sub_channel_config{
       _ -> Namespace0
     end,
 
-  NetworkParams = #amqp_params_network{username = U, password = Pass, host = H, port = Port},
   Res = case amqp_connection:start(NetworkParams) of
           {ok, Con} ->
             CRes = amqp_connection:open_channel(Con),
