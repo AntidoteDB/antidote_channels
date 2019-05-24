@@ -14,6 +14,7 @@
 -export([
   init_close_test/1,
   bind_exception_test/1,
+  test_socket/1,
   send_receive_test/1,
   send_receive_multi_test/1,
   send_receive_multi_diff_test/1,
@@ -32,6 +33,7 @@ groups() -> [
 all() -> [
   init_close_test,
   bind_exception_test,
+  test_socket,
   send_receive_test,
   send_receive_nonamespace_test,
   send_receive_nonamespace_notopic_test,
@@ -61,6 +63,8 @@ end_per_group(multiple_subscribers, Config) ->
 init_per_testcase(init_close_test, Config) -> Config;
 
 init_per_testcase(bind_exception_test, Config) -> Config;
+
+init_per_testcase(test_socket, Config) -> Config;
 
 init_per_testcase(send_receive_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
@@ -125,6 +129,8 @@ end_per_testcase(init_close_test, _Config) -> ok;
 
 end_per_testcase(bind_exception_test, _Config) -> ok;
 
+end_per_testcase(test_socket, _Config) -> ok;
+
 end_per_testcase(send_receive_test, Config) ->
   terminate_channel([?config(channel, Config)]);
 
@@ -170,6 +176,9 @@ bind_exception_test(_Config) ->
   },
   {error, eaddrinuse} = channel_zeromq:start_link(CConfig),
   erlzmq:close(Socket).
+
+test_socket(_Config) ->
+  false = channel_zeromq:is_alive(zeromq_channel, {{127, 0, 0, 1}, ?PORT}).
 
 send_receive_test(Config) ->
   Channel = ?config(channel, Config),

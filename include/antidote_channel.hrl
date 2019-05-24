@@ -29,6 +29,8 @@
 -include_lib("amqp_client/include/amqp_client.hrl").
 
 -define(DEFAULT_ZMQ_PORT, 8086).
+-define(CONNECTION_TIMEOUT, 5000).
+
 
 -record(message, {payload}).
 
@@ -70,6 +72,7 @@
 }).
 
 -type channel() :: term().
+-type channel_type() :: zeromq_channel | rabbitmq_channel.
 -type channel_config() :: term().
 %% TODO: restrict possible types
 -type channel_state() :: term().

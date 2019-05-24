@@ -15,8 +15,8 @@
 -record(channel_state, {channel, connection, exchange, handler, subscriber_tags}).
 
 %% API
--export([start_link/1, publish/3, stop/1]).
--export([init_channel/1, publish_async/3, add_subscriptions/2, handle_subscription/2, event_for_message/1, terminate/2]).
+-export([start_link/1, publish/3, is_alive/2, stop/1]).
+-export([init_channel/1, publish_async/3, add_subscriptions/2, handle_subscription/2, event_for_message/1, is_alive/1, terminate/2]).
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), ct:print(X, Y)).
@@ -47,6 +47,12 @@ stop(Pid) ->
 publish(Pid, Topic, Msg) ->
   antidote_channel:publish_async(Pid, Topic, Msg).
 
+is_alive(rabbitmq_channel, Address) ->
+  is_alive(Address).
+
+%%%===================================================================
+%%% Callbacks
+%%%===================================================================
 
 % Routing with no topic is not supported.
 % It might conflict with existing namespaces.
@@ -134,6 +140,10 @@ event_for_message({#'basic.deliver'{}, #'amqp_msg'{}}) -> {ok, push_notification
 event_for_message({#'basic.consume_ok'{}, _}) -> {ok, do_nothing};
 event_for_message(_) -> {error, bad_request}.
 
+-spec is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+is_alive(_Address) ->
+  %TODO
+  false.
 
 %%%===================================================================
 %%% Private Functions

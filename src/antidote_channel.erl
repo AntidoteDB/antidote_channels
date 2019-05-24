@@ -30,7 +30,7 @@
 -include_lib("antidote_channel.hrl").
 
 %% API
--export([start_link/2, publish_async/3, add_subscriptions/2, handle_subscription/2, stop/1]).
+-export([start_link/2, publish_async/3, add_subscriptions/2, handle_subscription/2, is_alive/2, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -57,6 +57,8 @@
 -callback handle_subscription(Msg :: message(), State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
 -callback event_for_message(Info :: term()) -> {ok, event()} | {error, Reason :: atom()}.
+
+-callback is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
 %%%===================================================================
 %%% API
@@ -85,6 +87,11 @@ add_subscriptions(Pid, Topics) ->
 handle_subscription(Pid, Msg) ->
   gen_server:call(Pid, {handle_subscription, Msg}).
 
+-spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+
+is_alive(ChannelType, Address) ->
+  ChannelType:is_alive(Address).
+
 -spec stop(Pid :: pid()) -> ok.
 
 stop(Pid) ->
@@ -99,13 +106,12 @@ stop(Pid) ->
   {stop, Reason :: term()} | ignore.
 
 init([Mod, Config]) ->
-  Res = (catch Mod:init_channel(Config)),
+  Res = Mod:init_channel(Config),
   case Res of
     {ok, InitState} ->
       {ok, #state{module = Mod, config = Config, channel_state = InitState}};
     {error, Reason} -> {stop, Reason}
   end.
-
 
 -spec handle_call(Request :: term(), From :: {pid(), Tag :: term()},
     State :: state()) ->
@@ -115,6 +121,9 @@ init([Mod, Config]) ->
   {noreply, NewState :: term(), timeout() | hibernate | {continue, term()}} |
   {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
   {stop, Reason :: term(), NewState :: term()}.
+
+handle_call({is_alive, Address}, _, #state{module = Mod} = State) ->
+  {reply, Mod:is_alive(Address), State};
 
 handle_call(_, _, State) -> {noreply, State}.
 

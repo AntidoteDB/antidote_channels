@@ -15,8 +15,8 @@
 -record(channel_state, {namespace :: binary(), topics :: [binary()], handler :: pid(), context, pub, subs, current :: atom()}).
 
 %% API
--export([start_link/1, publish/3, stop/1]).
--export([init_channel/1, add_subscriptions/2, publish_async/3, handle_subscription/2, event_for_message/1, terminate/2]).
+-export([start_link/1, publish/3, is_alive/2, stop/1]).
+-export([init_channel/1, add_subscriptions/2, publish_async/3, handle_subscription/2, event_for_message/1, is_alive/1, terminate/2]).
 
 
 -ifndef(TEST).
@@ -29,6 +29,9 @@
 -define(LOG_INFO(X), ct:print(X)).
 -endif.
 
+%%%===================================================================
+%%% API
+%%%===================================================================
 
 -spec start_link(Config :: channel_config()) ->
   {ok, Pid :: atom()} |
@@ -38,14 +41,24 @@
 start_link(Config) ->
   antidote_channel:start_link(?MODULE, Config).
 
+-spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
+
+publish(Pid, Topic, Msg) ->
+  antidote_channel:publish_async(Pid, Topic, Msg).
+
+-spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+
+is_alive(zeromq_channel, Address) ->
+  is_alive(Address).
 
 -spec stop(Pid :: pid()) -> ok.
+
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
--spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
-publish(Pid, Topic, Msg) ->
-  antidote_channel:publish_async(Pid, Topic, Msg).
+%%%===================================================================
+%%% Callbacks
+%%%===================================================================
 
 %%TODO: Create supervisor for channels?
 init_channel(#pub_sub_channel_config{
@@ -70,24 +83,24 @@ init_channel(#pub_sub_channel_config{
         {Bind, Publisher}
     end,
 
+
   case Res of
     {ok, P} ->
-      SubsRet = case P of
-                  undefined -> [];
-                  _ ->
-                    Subs = connect_to_publishers(Pubs, Namespace, Topics, Context),
-                    %%TODO: find another way to ensure socket starts
-                    erlzmq:send(P, <<"init">>),
-                    timer:sleep(500),
-                    Subs
-                end,
+      Subs = connect_to_publishers(Pubs, Namespace, Topics, Context),
+      case P of
+        undefined -> ok;
+        _ ->
+          %%TODO: find another way to ensure socket starts
+          erlzmq:send(P, <<"init">>),
+          timer:sleep(500)
+      end,
       {ok, #channel_state{
         pub = P,
         context = Context,
         handler = Process,
         namespace = Namespace,
         topics = Topics,
-        subs = SubsRet,
+        subs = Subs,
         current = waiting
       }};
     {{error, _} = E, _} -> E;
@@ -107,11 +120,11 @@ publish_async(_Topic, _Msg, #channel_state{pub = undefined} = State) ->
   {{error, no_publisher}, State};
 
 publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
-  TopicBinary = getTopicBinary(Namespace, Topic),
-%Need to check if sending two separate messages affects performance
+  TopicBinary = getTopicFromBinary(Namespace, Topic),
   ok = erlzmq:send(Channel, TopicBinary, [sndmore]),
   ok = erlzmq:send(Channel, term_to_binary(Msg)),
   {ok, State}.
+
 
 handle_subscription(#message{payload = {zmq, _Socket, _, [rcvmore]}}, #channel_state{namespace = <<>>, topics = [], current = waiting} = State) ->
   {ok, State#channel_state{current = receiving}};
@@ -120,8 +133,8 @@ handle_subscription(#message{payload = {zmq, _Socket, Namespace, [rcvmore]}}, #c
   {ok, State#channel_state{current = receiving}};
 
 handle_subscription(#message{payload = {zmq, _Socket, NamespaceTopic, [rcvmore]}}, #channel_state{namespace = N, topics = T, current = waiting} = State) ->
-  case getTopicTerm(NamespaceTopic) of
-    {ok, {Namespace, Topic}} when Namespace == N ->
+  case getTopicTerm(NamespaceTopic, N) of
+    {ok, Topic} ->
       case lists:member(Topic, T) of
         true -> {ok, State#channel_state{current = receiving}};
         false when T == [] -> {ok, State#channel_state{current = receiving}};
@@ -130,6 +143,8 @@ handle_subscription(#message{payload = {zmq, _Socket, NamespaceTopic, [rcvmore]}
     _ -> ?LOG_INFO("Received non-subscribed topic. Ignoring ~p.", [NamespaceTopic]), {ok, State}
   end;
 
+
+%%TODO: Handle errors from subscriber?
 handle_subscription(#message{payload = {zmq, _Socket, Msg, [rcvmore]}}, #channel_state{handler = S, current = receiving} = State) ->
   ok = gen_server:call(S, binary_to_term(Msg)),
   {ok, State};
@@ -146,12 +161,29 @@ handle_subscription(Msg, State) ->
 %%What to do with Subscriber? --- do nothing.
 terminate(_Reason, #channel_state{context = C, pub = Channel, subs = Subscriptions}) ->
   lists:foreach(fun(Pi) -> erlzmq:close(Pi) end, Subscriptions),
-  erlzmq:close(Channel),
+  case Channel of
+    undefined -> ok;
+    _ -> erlzmq:close(Channel)
+  end,
   erlzmq:term(C).
 
 
 event_for_message({zmq, _Socket, _BinaryMsg, _Flags}) -> {ok, push_notification};
 event_for_message(_) -> {error, bad_request}.
+
+-spec is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+is_alive(Address) ->
+  {ok, Context} = erlzmq:context(),
+  {ok, Socket} = erlzmq:socket(Context, [sub, {active, false}]),
+  ok = erlzmq:connect(Socket, connection_string(Address)),
+  ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
+  ok = erlzmq:setsockopt(Socket, subscribe, <<>>),
+  Res = erlzmq:recv(Socket),
+  erlzmq:close(Socket),
+  case Res of
+    {ok, _} -> true;
+    _ -> false
+  end.
 
 
 %%%===================================================================
@@ -175,7 +207,7 @@ subscribe_topics(Subscriber, Namespace, Topics) ->
       ok = erlzmq:setsockopt(Subscriber, subscribe, Namespace);
     _ -> lists:foreach(
       fun(Topic) ->
-        TopicBinary = getTopicBinary(Namespace, Topic),
+        TopicBinary = getTopicFromBinary(Namespace, Topic),
         ok = erlzmq:setsockopt(Subscriber, subscribe, TopicBinary)
       end, Topics)
   end.
@@ -188,24 +220,16 @@ connection_string({Ip, Port}) ->
   lists:flatten(io_lib:format("tcp://~s:~p", [IpString, Port])).
 
 
-getTopicBinary(<<>>, <<>>) ->
-  <<>>;
-getTopicBinary(undefined, Topic) ->
-  <<<<".">>/binary, Topic/binary>>;
-getTopicBinary(<<>>, Topic) ->
-  <<<<".">>/binary, Topic/binary>>;
-getTopicBinary(Namespace, undefined) ->
-  <<Namespace/binary>>;
-getTopicBinary(Namespace, <<>>) ->
-  <<Namespace/binary>>;
-getTopicBinary(Namespace, Topic) ->
-  <<Namespace/binary, <<".">>/binary, Topic/binary>>.
+getTopicFromBinary(<<>>, Topic) ->
+  Topic;
+getTopicFromBinary(undefined, Topic) ->
+  Topic;
+getTopicFromBinary(Namespace, Topic) ->
+  <<Namespace/binary, Topic/binary>>.
 
 
-getTopicTerm(NamespaceTopic) ->
-  case string:split(NamespaceTopic, ".") of
-    [Namespace, Topic] -> {ok, {<<Namespace/binary>>, <<Topic/binary>>}};
-    [Namespace] -> {ok, {<<Namespace/binary>>, <<>>}};
-    [[], Topic] -> {ok, {<<>>, <<Topic/binary>>}};
-    _ -> {error, wrong_format}
+getTopicTerm(NamespaceTopic, Namespace) ->
+  case string:prefix(NamespaceTopic, Namespace) of
+    nomatch -> {error, wrong_format};
+    Topic -> {ok, Topic}
   end.
