@@ -50,13 +50,13 @@ init_per_testcase(init_close_test, Config) -> Config;
 init_per_testcase(send_receive_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
   CConfig = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>], subscriber = Sub},
-  Chan = initChannel(CConfig),
+  Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_nonamespace_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
   CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<"any">>, topics = [<<"test_topic">>], subscriber = Sub},
-  Chan = initChannel(CConfig),
+  Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_notopic_test, Config) ->
@@ -64,37 +64,37 @@ init_per_testcase(send_receive_notopic_test, Config) ->
   {ok, Sub2} = basic_consumer:start_link(),
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"antidote_fanout">>, topics = [], subscriber = Sub1},
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{namespace = <<"antidote_fanout">>, topics = [], subscriber = Sub2},
-  Chan1 = initChannel(CConfig1),
-  Chan2 = initChannel(CConfig2),
+  Chan1 = init_channel(CConfig1),
+  Chan2 = init_channel(CConfig2),
   [{subscriber1, Sub1}, {subscriber2, Sub2}, {channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_test, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>]},
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>]},
-  Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  Chan1 = init_channel(CConfig1, subscriber1, Config),
+  Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_diff_test, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic1">>]},
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic2">>]},
-  Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  Chan1 = init_channel(CConfig1, subscriber1, Config),
+  Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_topics, Config) ->
   CConfig1 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"other_topic">>]},
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"multi_topic1">>, <<"multi_topic2">>]},
-  Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber1, Config),
+  Chan1 = init_channel(CConfig1, subscriber1, Config),
+  Chan2 = init_channel(CConfig2, subscriber1, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config].
 
-initChannel(ChannelConfig, SubscriberName, TestConfig) ->
+init_channel(ChannelConfig, SubscriberName, TestConfig) ->
   Sub = ?config(SubscriberName, TestConfig),
   CConfig = ChannelConfig#pub_sub_channel_config{subscriber = Sub},
-  initChannel(CConfig).
+  init_channel(CConfig).
 
-initChannel(ChannelConfig) ->
+init_channel(ChannelConfig) ->
   {ok, Chan} = channel_rabbitmq:start_link(ChannelConfig),
   Chan.
 

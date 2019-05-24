@@ -120,7 +120,7 @@ publish_async(_Topic, _Msg, #channel_state{pub = undefined} = State) ->
   {{error, no_publisher}, State};
 
 publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
-  TopicBinary = getTopicFromBinary(Namespace, Topic),
+  TopicBinary = get_topic_from_binary(Namespace, Topic),
   ok = erlzmq:send(Channel, TopicBinary, [sndmore]),
   ok = erlzmq:send(Channel, term_to_binary(Msg)),
   {ok, State}.
@@ -133,7 +133,7 @@ handle_subscription(#message{payload = {zmq, _Socket, Namespace, [rcvmore]}}, #c
   {ok, State#channel_state{current = receiving}};
 
 handle_subscription(#message{payload = {zmq, _Socket, NamespaceTopic, [rcvmore]}}, #channel_state{namespace = N, topics = T, current = waiting} = State) ->
-  case getTopicTerm(NamespaceTopic, N) of
+  case get_topic_term(NamespaceTopic, N) of
     {ok, Topic} ->
       case lists:member(Topic, T) of
         true -> {ok, State#channel_state{current = receiving}};
@@ -207,7 +207,7 @@ subscribe_topics(Subscriber, Namespace, Topics) ->
       ok = erlzmq:setsockopt(Subscriber, subscribe, Namespace);
     _ -> lists:foreach(
       fun(Topic) ->
-        TopicBinary = getTopicFromBinary(Namespace, Topic),
+        TopicBinary = get_topic_from_binary(Namespace, Topic),
         ok = erlzmq:setsockopt(Subscriber, subscribe, TopicBinary)
       end, Topics)
   end.
@@ -220,15 +220,15 @@ connection_string({Ip, Port}) ->
   lists:flatten(io_lib:format("tcp://~s:~p", [IpString, Port])).
 
 
-getTopicFromBinary(<<>>, Topic) ->
+get_topic_from_binary(<<>>, Topic) ->
   Topic;
-getTopicFromBinary(undefined, Topic) ->
+get_topic_from_binary(undefined, Topic) ->
   Topic;
-getTopicFromBinary(Namespace, Topic) ->
+get_topic_from_binary(Namespace, Topic) ->
   <<Namespace/binary, Topic/binary>>.
 
 
-getTopicTerm(NamespaceTopic, Namespace) ->
+get_topic_term(NamespaceTopic, Namespace) ->
   case string:prefix(NamespaceTopic, Namespace) of
     nomatch -> {error, wrong_format};
     Topic -> {ok, Topic}

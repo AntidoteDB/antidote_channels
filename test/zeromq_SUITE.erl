@@ -69,19 +69,19 @@ init_per_testcase(test_socket, Config) -> Config;
 init_per_testcase(send_receive_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
   CConfig = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>], subscriber = Sub},
-  Chan = initChannel(CConfig),
+  Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_nonamespace_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
   CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<>>, topics = [<<"test_topic">>], subscriber = Sub},
-  Chan = initChannel(CConfig),
+  Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_nonamespace_notopic_test, Config) ->
   {ok, Sub} = basic_consumer:start_link(),
   CConfig = ?PUB_SUB#pub_sub_channel_config{namespace = <<>>, subscriber = Sub},
-  Chan = initChannel(CConfig),
+  Chan = init_channel(CConfig),
   [{subscriber, Sub}, {channel, Chan} | Config];
 
 init_per_testcase(send_receive_multi_test, Config) ->
@@ -90,8 +90,8 @@ init_per_testcase(send_receive_multi_test, Config) ->
   },
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic">>],
     network_params = #zmq_params{pubPort = 7867, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}},
-  Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  Chan1 = init_channel(CConfig1, subscriber1, Config),
+  Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_diff_test, Config) ->
@@ -101,8 +101,8 @@ init_per_testcase(send_receive_multi_diff_test, Config) ->
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"test_topic2">>],
     network_params = #zmq_params{pubPort = 7867, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}
   },
-  Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  Chan1 = init_channel(CConfig1, subscriber1, Config),
+  Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config];
 
 init_per_testcase(send_receive_multi_topics, Config) ->
@@ -110,17 +110,17 @@ init_per_testcase(send_receive_multi_topics, Config) ->
     network_params = #zmq_params{pubPort = 7866, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}},
   CConfig2 = ?PUB_SUB#pub_sub_channel_config{topics = [<<"multi_topic1">>, <<"multi_topic2">>],
     network_params = #zmq_params{pubPort = 7867, publishersAddresses = [{{127, 0, 0, 1}, 7866}]}},
-  Chan1 = initChannel(CConfig1, subscriber1, Config),
-  Chan2 = initChannel(CConfig2, subscriber2, Config),
+  Chan1 = init_channel(CConfig1, subscriber1, Config),
+  Chan2 = init_channel(CConfig2, subscriber2, Config),
   [{channel1, Chan1}, {channel2, Chan2} | Config].
 
 
-initChannel(ChannelConfig, SubscriberName, TestConfig) ->
+init_channel(ChannelConfig, SubscriberName, TestConfig) ->
   Sub = ?config(SubscriberName, TestConfig),
   CConfig = ChannelConfig#pub_sub_channel_config{subscriber = Sub},
-  initChannel(CConfig).
+  init_channel(CConfig).
 
-initChannel(ChannelConfig) ->
+init_channel(ChannelConfig) ->
   {ok, Chan} = channel_zeromq:start_link(ChannelConfig),
   Chan.
 
