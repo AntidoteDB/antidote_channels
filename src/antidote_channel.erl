@@ -152,18 +152,18 @@ handle_info(Info, #state{module = Mod} = State) ->
     {ok, Event} ->
       case handle_message(Event, Info, State) of
         {ok, State1} -> {noreply, State1};
-        {{error, _} = Error, State} -> {stop, Error, State}
+        {{error, _} = Error, State1} -> {stop, Error, State1}
       end;
     _ ->
       logger:info("Unknown message received ~p", [Info]), {noreply, State}
   end.
 
 -spec handle_message(Event :: event(), Msg :: message(), State :: state()) ->
-  {ok, NewState :: state()}.
+  {ok, NewState :: state()} | {Error :: {error, Reason :: atom()}, State :: state()}.
 
 handle_message(push_notification, Msg, #state{module = Mod, channel_state = S} = State) ->
-  {_Resp, S1} = Mod:handle_subscription(#message{payload = Msg}, S),
-  {ok, State#state{channel_state = S1}}.
+  {Resp, S1} = Mod:handle_subscription(#message{payload = Msg}, S),
+  {Resp, State#state{channel_state = S1}}.
 
 -spec terminate(Reason :: atom(), State :: state()) -> Void :: any().
 

@@ -59,9 +59,6 @@ is_alive(rabbitmq_channel, Address) ->
 init_channel(#pub_sub_channel_config{topics = [], namespace = <<>>}) ->
   {error, not_supported};
 
-init_channel(#pub_sub_channel_config{topics = [], namespace = undefined}) ->
-  {error, not_supported};
-
 init_channel(#pub_sub_channel_config{
   topics = Topics,
   namespace = Namespace0,
@@ -70,7 +67,6 @@ init_channel(#pub_sub_channel_config{
 ) ->
   Namespace =
     case Namespace0 of
-      undefined -> ?DEFAULT_EXCHANGE;
       <<>> -> ?DEFAULT_EXCHANGE;
       _ -> Namespace0
     end,
@@ -177,8 +173,6 @@ direct_routing_declare(Channel, ExchangeName, RoutingKeys, #'queue.declare'{} = 
   {ok, Queues}.
 
 
-declare_exchange(undefined, Channel, Type) ->
-  declare_exchange(?DEFAULT_EXCHANGE, Channel, Type);
 declare_exchange(<<>>, Channel, Type) ->
   declare_exchange(?DEFAULT_EXCHANGE, Channel, Type);
 declare_exchange(ExchangeName, Channel, Type) ->

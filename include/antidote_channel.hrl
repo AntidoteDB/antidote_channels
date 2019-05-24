@@ -36,7 +36,7 @@
 
 -record(pub_sub_channel_config, {
   topics = [] :: [binary()],
-  namespace = <<"default">> :: binary(),
+  namespace = <<>> :: binary(),
   network_params :: term(),
   subscriber :: pid()
 }).

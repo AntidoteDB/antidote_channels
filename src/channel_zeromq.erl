@@ -222,8 +222,6 @@ connection_string({Ip, Port}) ->
 
 get_topic_from_binary(<<>>, Topic) ->
   Topic;
-get_topic_from_binary(undefined, Topic) ->
-  Topic;
 get_topic_from_binary(Namespace, Topic) ->
   <<Namespace/binary, Topic/binary>>.
 
