@@ -30,7 +30,7 @@
 -include_lib("antidote_channel.hrl").
 
 %% API
--export([start_link/1, publish/3, add_subscriptions/2, handle_subscription/2, is_alive/2, get_config/1, stop/1]).
+-export([start_link/1, publish/2, add_subscriptions/2, handle_subscription/2, is_alive/2, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -50,7 +50,7 @@
 
 -callback init_channel(Config :: channel_config()) -> {ok, State :: channel_state()} | {error, Reason :: term()}.
 
--callback publish_async(Topic :: binary(), Msg :: message(), State :: channel_state()) -> {ok, State :: channel_state()}.
+-callback publish_async(Msg :: message(), State :: channel_state()) -> {ok, State :: channel_state()}.
 
 -callback add_subscriptions(Topics :: [binary()], State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
@@ -80,10 +80,10 @@ start_link(#{module := Mod} = ConfigMap) ->
 start_link(_ConfigMap) ->
   {error, bad_Configuration}.
 
--spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
+-spec publish(Pid :: pid(), Msg :: pub_sub_msg()) -> ok.
 
-publish(Pid, Topic, Msg) ->
-  gen_server:cast(Pid, {publish_async, Topic, Msg}).
+publish(Pid, Msg) ->
+  gen_server:cast(Pid, {publish_async, Msg}).
 
 -spec add_subscriptions(Pid :: pid(), Topics :: [binary()]) -> ok.
 
@@ -169,8 +169,8 @@ handle_cast({add_subscriptions, Topics}, #state{module = Mod, channel_state = S}
   {ok, S1} = Mod:add_subscriptions(Topics, S),
   {noreply, State#state{channel_state = S1}};
 
-handle_cast({publish_async, Topic, Msg}, #state{module = Mod, channel_state = S} = State) ->
-  {ok, S1} = Mod:publish_async(Topic, Msg, S),
+handle_cast({publish_async, #pub_sub_msg{} = Msg}, #state{module = Mod, channel_state = S} = State) ->
+  {ok, S1} = Mod:publish_async(Msg, S),
   {noreply, State#state{channel_state = S1}}.
 
 -spec handle_info(Info :: timeout | term(), State :: state()) ->

@@ -16,8 +16,8 @@
 -record(channel_state, {channel, connection, exchange, handler, subscriber_tags}).
 
 %% API
--export([start_link/1, publish/3, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, publish_async/3, add_subscriptions/2, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
+-export([start_link/1, publish/2, is_alive/2, get_network_config/2, stop/1]).
+-export([init_channel/1, publish_async/2, add_subscriptions/2, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), ct:print(X, Y)).
@@ -44,9 +44,9 @@ start_link(Config) ->
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
--spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
-publish(Pid, Topic, Msg) ->
-  antidote_channel:publish(Pid, Topic, Msg).
+-spec publish(Pid :: pid(), Msg :: pub_sub_msg()) -> ok.
+publish(Pid, Msg) ->
+  antidote_channel:publish(Pid, Msg).
 
 is_alive(rabbitmq_channel, Address) ->
   is_alive(Address).
@@ -140,9 +140,9 @@ init_channel(_Config) ->
 
 add_subscriptions(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
 
-publish_async(Topic, Msg, #channel_state{channel = Channel, exchange = Exchange} = State) ->
+publish_async(#pub_sub_msg{topic = Topic, payload = Payload}, #channel_state{channel = Channel, exchange = Exchange} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
-  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Msg}),
+  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload}),
   {ok, State}.
 
 handle_subscription(

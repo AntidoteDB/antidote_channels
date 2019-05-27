@@ -155,7 +155,7 @@ send_receive_test(Config) ->
   Configs = [?config(channel_rabbitmq, Config), ?config(channel_zeromq, Config)],
   lists:foreach(
     fun({[Channel], [#{subscriber := Sub}]}) ->
-      antidote_channel:publish(Channel, <<"test_topic">>, <<"Test">>),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"test_topic">>, payload = <<"Test">>}),
       timer:sleep(200),
       {_, Buff} = sys:get_state(Sub),
       true = lists:member(<<"Test">>, Buff),
@@ -184,7 +184,7 @@ send_receive_nonamespace_test(Config) ->
   Configs = [?config(channel_rabbitmq, Config), ?config(channel_zeromq, Config)],
   lists:foreach(
     fun({[Channel], [#{subscriber := Sub}]}) ->
-      antidote_channel:publish(Channel, <<"test_topic">>, <<"Test">>),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"test_topic">>, payload = <<"Test">>}),
       timer:sleep(200),
       {_, Buff} = sys:get_state(Sub),
       true = lists:member(<<"Test">>, Buff)
@@ -217,7 +217,7 @@ send_receive_multi_test(Config) ->
   ],
   lists:foreach(
     fun({[Channel | _], [#{subscriber := Sub1}, #{subscriber := Sub2}]}) ->
-      antidote_channel:publish(Channel, <<"test_topic">>, <<"Test0">>),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"test_topic">>, payload = <<"Test0">>}),
       timer:sleep(200),
       {_, Buff1} = sys:get_state(Sub1),
       {_, Buff2} = sys:get_state(Sub2),
@@ -266,8 +266,8 @@ send_receive_multi_diff_test(Config) ->
   ],
   lists:foreach(
     fun({[Channel | _], [#{subscriber := Sub1}, #{subscriber := Sub2}]}) ->
-      antidote_channel:publish(Channel, <<"test_topic1">>, <<"Test1">>),
-      antidote_channel:publish(Channel, <<"test_topic2">>, <<"Test2">>),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"test_topic1">>, payload = <<"Test1">>}),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"test_topic2">>, payload = <<"Test2">>}),
       timer:sleep(500),
       {_, Buff1} = sys:get_state(Sub1),
       {_, Buff2} = sys:get_state(Sub2),
@@ -318,9 +318,9 @@ send_receive_multi_topics_test(Config) ->
   ],
   lists:foreach(
     fun({[Channel | _], [_, #{subscriber := Sub}]}) ->
-      antidote_channel:publish(Channel, <<"multi_topic1">>, <<"multi_topic1">>),
-      antidote_channel:publish(Channel, <<"multi_topic2">>, <<"multi_topic2">>),
-      antidote_channel:publish(Channel, <<"multi_topic3">>, <<"multi_topic3">>),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"multi_topic1">>, payload = <<"multi_topic1">>}),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"multi_topic2">>, payload = <<"multi_topic2">>}),
+      antidote_channel:publish(Channel, #pub_sub_msg{topic = <<"multi_topic3">>, payload = <<"multi_topic3">>}),
       timer:sleep(500),
       {_, Buff} = sys:get_state(Sub),
       true = lists:member(<<"multi_topic1">>, Buff),

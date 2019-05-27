@@ -15,8 +15,8 @@
 -record(channel_state, {namespace :: binary(), topics :: [binary()], handler :: pid(), context, pub, subs, current :: atom()}).
 
 %% API
--export([start_link/1, publish/3, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, add_subscriptions/2, publish_async/3, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
+-export([start_link/1, publish/2, is_alive/2, get_network_config/2, stop/1]).
+-export([init_channel/1, add_subscriptions/2, publish_async/2, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
 
 
 -ifndef(TEST).
@@ -41,10 +41,10 @@
 start_link(Config) ->
   antidote_channel:start_link(Config#{module => channel_zeromq}).
 
--spec publish(Pid :: pid(), Topic :: binary(), Msg :: term()) -> ok.
+-spec publish(Pid :: pid(), Msg :: pub_sub_msg()) -> ok.
 
-publish(Pid, Topic, Msg) ->
-  antidote_channel:publish(Pid, Topic, Msg).
+publish(Pid, Msg) ->
+  antidote_channel:publish(Pid, Msg).
 
 -spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
@@ -134,13 +134,13 @@ add_subscriptions(Topics, #channel_state{subs = Subs, namespace = Namespace} = S
     subscribe_topics(Sub, Namespace, Topics) end, Subs),
   {ok, State}.
 
-publish_async(_Topic, _Msg, #channel_state{pub = undefined} = State) ->
+publish_async(_Msg, #channel_state{pub = undefined} = State) ->
   {{error, no_publisher}, State};
 
-publish_async(Topic, Msg, #channel_state{pub = Channel, namespace = Namespace} = State) ->
+publish_async(#pub_sub_msg{topic = Topic, payload = Payload}, #channel_state{pub = Channel, namespace = Namespace} = State) ->
   TopicBinary = get_topic_from_binary(Namespace, Topic),
   ok = erlzmq:send(Channel, TopicBinary, [sndmore]),
-  ok = erlzmq:send(Channel, term_to_binary(Msg)),
+  ok = erlzmq:send(Channel, term_to_binary(Payload)),
   {ok, State}.
 
 

@@ -32,7 +32,8 @@
 -define(CONNECTION_TIMEOUT, 5000).
 
 
--record(message, {payload}).
+-record(message, {payload :: message_payload()}).
+-record(pub_sub_msg, {topic :: binary(), payload :: term()}).
 
 -record(pub_sub_channel_config, {
   module :: atom(),
@@ -62,7 +63,9 @@
 
 -type channel_state() :: term().
 
--type message() :: #message{payload :: message_payload()}.
+
+-type pub_sub_msg() :: #pub_sub_msg{}.
+-type message() :: #message{} | pub_sub_msg().
 -type message_params() :: term().
 
--type message_payload() :: {#'basic.deliver'{}, #'amqp_msg'{}}.
+-type message_payload() :: {#'basic.deliver'{}, #'amqp_msg'{}} | {zmq, term(), term(), [term()]}.
