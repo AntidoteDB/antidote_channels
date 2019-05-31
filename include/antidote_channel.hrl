@@ -31,16 +31,31 @@
 -define(DEFAULT_ZMQ_PORT, 8086).
 -define(CONNECTION_TIMEOUT, 5000).
 
-
--record(message, {payload :: message_payload()}).
+-record(internal_msg, {payload, meta = #{}}).
 -record(pub_sub_msg, {topic :: binary(), payload :: term()}).
+-record(rpc_msg, {request_id :: reference(), request_payload :: term(), reply_payload :: term()}).
+
+-type internal_msg() :: #internal_msg{}.
+-type pub_sub_msg() :: #pub_sub_msg{}.
+-type rpc_msg() :: #rpc_msg{}.
+
+-type message() :: pub_sub_msg() | rpc_msg().
+
 
 -record(pub_sub_channel_config, {
   module :: atom(),
   topics = [] :: [binary()],
   namespace = <<>> :: binary(),
   network_params :: term(),
-  subscriber :: pid() | undefined
+  handler :: pid() | undefined
+}).
+
+-record(rpc_channel_config, {
+  module :: atom(),
+  handler :: pid(),
+  load_balanced :: boolean(),
+  async :: boolean(),
+  network_params :: term()
 }).
 
 -record(pub_channel_config, {
@@ -49,23 +64,22 @@
   %% TODO: rpc = false :: boolean() % Use true to force process to wait for a response
 }).
 
--record(zmq_params, {
-  pubHost = "*",
-  pubPort,
-  publishersAddresses = []
+-record(rpc_channel_zmq_params, {
+  remote_host :: inet:ip_address() | undefined,
+  remote_port :: inet:port_number()| undefined,
+  host :: inet:ip_address() | undefined,
+  port :: inet:port_number() | undefined
+}).
+
+-record(pub_sub_zmq_params, {
+  host = {0, 0, 0, 0} :: inet:ip_address(),
+  port :: inet:port_number() | undefined,
+  publishersAddresses = [] :: [{inet:ip_address(), inet:port_number()}]
 }).
 
 -type channel() :: term().
-
-
 -type channel_type() :: atom(). %zeromq_channel | rabbitmq_channel
 -type channel_config() :: term(). %#amqp_params_network{} | #zmq_params{}.
-
 -type channel_state() :: term().
-
-
--type pub_sub_msg() :: #pub_sub_msg{}.
--type message() :: #message{} | pub_sub_msg().
 -type message_params() :: term().
-
 -type message_payload() :: {#'basic.deliver'{}, #'amqp_msg'{}} | {zmq, term(), term(), [term()]}.

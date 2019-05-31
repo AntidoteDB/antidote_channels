@@ -29,8 +29,18 @@
 -module(antidote_channel).
 -include_lib("antidote_channel.hrl").
 
+-ifndef(TEST).
+-define(LOG_INFO(X, Y), ct:print(X, Y)).
+-define(LOG_INFO(X), ct:print(X)).
+-endif.
+
+-ifdef(TEST).
+-define(LOG_INFO(X, Y), ct:print(X, Y)).
+-define(LOG_INFO(X), ct:print(X)).
+-endif.
+
 %% API
--export([start_link/1, publish/2, add_subscriptions/2, handle_subscription/2, is_alive/2, get_config/1, stop/1]).
+-export([start_link/1, send/2, subscribe/2, is_alive/2, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -38,9 +48,9 @@
 
 -behaviour(gen_server).
 
--record(state, {module, config, channel, channel_state}).
+-record(state, {module, config, handler, channel, channel_state, buffer = []}).
 
--type event() :: push_notification | do_nothing.
+-type event() :: deliver | do_nothing | buffer.
 
 -type state() :: #state{module :: module(), config :: channel_config(), channel :: channel(), channel_state :: channel_state()}.
 
@@ -48,19 +58,22 @@
 %%% Callback declarations
 %%%===================================================================
 
--callback init_channel(Config :: channel_config()) -> {ok, State :: channel_state()} | {error, Reason :: term()}.
+-callback init_channel(Config :: channel_config()) ->
+  {ok, State :: channel_state()} | {error, Reason :: term()}.
 
--callback publish_async(Msg :: message(), State :: channel_state()) -> {ok, State :: channel_state()}.
+-callback send(Msg :: message(), State :: channel_state()) ->
+  {ok, State :: channel_state()}.
 
--callback add_subscriptions(Topics :: [binary()], State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
+-callback subscribe(Topics :: [binary()], State :: channel_state()) ->
+  {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
--callback handle_subscription(Msg :: message(), State :: channel_state()) -> {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
+-callback handle_message(Msg :: internal_msg(), State :: channel_state()) ->
+  {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
--callback event_for_message(Info :: term()) -> {ok, event()} | {error, Reason :: atom()}.
+-callback unmarshal(Info :: message_payload(), State :: channel_state()) -> {
+  event(), message_payload()} | {event(), internal_msg(), message_payload()} | {error, Reason :: atom()}.
 
 -callback is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
-
--callback get_network_config(ConfigMap :: map()) -> State :: channel_state() | {error, Reason :: term()}.
 
 %%%===================================================================
 %%% API
@@ -77,23 +90,18 @@ start_link(#{module := Mod} = ConfigMap) ->
     Config -> gen_server:start_link(?MODULE, [Mod, Config], [])
   end;
 
-start_link(_ConfigMap) ->
-  {error, bad_Configuration}.
+start_link(ConfigMap) ->
+  {error, {bad_configuration, ConfigMap}}.
 
--spec publish(Pid :: pid(), Msg :: pub_sub_msg()) -> ok.
+-spec send(Pid :: pid(), Msg :: message()) -> ok.
 
-publish(Pid, Msg) ->
-  gen_server:cast(Pid, {publish_async, Msg}).
+send(Pid, Msg) ->
+  gen_server:call(Pid, {send, Msg}).
 
--spec add_subscriptions(Pid :: pid(), Topics :: [binary()]) -> ok.
+-spec subscribe(Pid :: pid(), Topics :: [binary()]) -> ok.
 
-add_subscriptions(Pid, Topics) ->
+subscribe(Pid, Topics) ->
   gen_server:cast(Pid, {add_subscriptions, Topics}).
-
--spec handle_subscription(Pid :: pid(), Msg :: term()) -> ok.
-
-handle_subscription(Pid, Msg) ->
-  gen_server:call(Pid, {handle_subscription, Msg}).
 
 -spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
@@ -117,13 +125,21 @@ get_config(#{module := Mod, pattern := Pattern, network_params := NetworkConfig}
   end.
 
 get_config(pub_sub, Mod, ConfigMap, NetworkConfig) ->
-  Default = #pub_sub_channel_config{},
-  Default#pub_sub_channel_config{
+  #pub_sub_channel_config{
     module = Mod,
-    topics = maps:get(topics, ConfigMap, Default#pub_sub_channel_config.topics),
-    namespace = maps:get(namespace, ConfigMap, Default#pub_sub_channel_config.namespace),
-    network_params = NetworkConfig,
-    subscriber = maps:get(subscriber, ConfigMap, Default#pub_sub_channel_config.subscriber)
+    topics = maps:get(topics, ConfigMap, #pub_sub_channel_config.topics),
+    namespace = maps:get(namespace, ConfigMap, #pub_sub_channel_config.namespace),
+    handler = maps:get(handler, ConfigMap, #pub_sub_channel_config.handler),
+    network_params = NetworkConfig
+  };
+
+get_config(rpc, Mod, ConfigMap, NetworkConfig) ->
+  #rpc_channel_config{
+    module = Mod,
+    handler = maps:get(handler, ConfigMap, #rpc_channel_config.handler),
+    load_balanced = maps:get(load_balanced, ConfigMap, #rpc_channel_config.load_balanced),
+    async = maps:get(async, ConfigMap, #rpc_channel_config.async),
+    network_params = NetworkConfig
   };
 
 get_config(_Pattern, _Mod, _ConfigMap, _NetworkConfig) ->
@@ -157,44 +173,51 @@ init([Mod, Config]) ->
 handle_call({is_alive, Address}, _, #state{module = Mod} = State) ->
   {reply, Mod:is_alive(Address), State};
 
-handle_call(_, _, State) -> {noreply, State}.
+handle_call({send, #rpc_msg{} = Msg}, _From, #state{module = Mod, channel_state = S} = State) ->
+  Ref = make_ref(),
+  {ok, S1} = Mod:send(Msg#rpc_msg{request_id = Ref}, S),
+  {reply, Ref, State#state{channel_state = S1}};
 
--spec handle_cast(Request :: term(), State :: state()) ->
-  {noreply, NewState :: state()} |
-  {noreply, NewState :: state(), timeout() | hibernate | {continue, term()}} |
-  {stop, Reason :: term(), NewState :: state()}.
+handle_call({send, #pub_sub_msg{} = Msg}, _From, #state{module = Mod, channel_state = S} = State) ->
+  {ok, S1} = Mod:send(Msg, S),
+  {reply, ok, State#state{channel_state = S1}};
 
-
-handle_cast({add_subscriptions, Topics}, #state{module = Mod, channel_state = S} = State) ->
+handle_call({add_subscriptions, Topics}, _From, #state{module = Mod, channel_state = S} = State) ->
   {ok, S1} = Mod:add_subscriptions(Topics, S),
   {noreply, State#state{channel_state = S1}};
 
-handle_cast({publish_async, #pub_sub_msg{} = Msg}, #state{module = Mod, channel_state = S} = State) ->
-  {ok, S1} = Mod:publish_async(Msg, S),
-  {noreply, State#state{channel_state = S1}}.
+handle_call(_, _, State) -> {noreply, State}.
+
+handle_cast(Info, State) ->
+  ?LOG_INFO("Unknown message received ~p", [Info]), {noreply, State}.
 
 -spec handle_info(Info :: timeout | term(), State :: state()) ->
   {noreply, NewState :: state()} |
   {noreply, NewState :: state(), timeout() | hibernate | {continue, term()}} |
   {stop, Reason :: term(), NewState :: state()}.
 
-handle_info(Info, #state{module = Mod} = State) ->
-  case Mod:event_for_message(Info) of
-    {ok, do_nothing} -> State;
-    {ok, Event} ->
-      case handle_message(Event, Info, State) of
-        {ok, State1} -> {noreply, State1};
-        {{error, _} = Error, State1} -> {stop, Error, State1}
+handle_info(Info, #state{module = Mod, channel_state = S, buffer = Buff} = State) ->
+  case Mod:unmarshal(Info, S) of
+    {do_nothing, _} -> {noreply, State};
+    {buffer, M} -> {noreply, State#state{buffer = [M | Buff]}};
+    {deliver, #internal_msg{meta = Meta} = Msg, Original} ->
+      Msg1 = Msg#internal_msg{meta = Meta#{buffered => [Original | Buff]}},
+      case handle_message(Msg1, State) of
+        {ok, State1} -> {noreply, State1#state{buffer = []}};
+        {{error, _} = Error, State1} -> {stop, Error, State1#state{buffer = []}}
       end;
     _ ->
-      logger:info("Unknown message received ~p", [Info]), {noreply, State}
-  end.
+      {stop, {error, unmarshalling, Info}}
+  end;
 
--spec handle_message(Event :: event(), Msg :: message(), State :: state()) ->
+handle_info(Info, State) ->
+  ?LOG_INFO("Unknown message received ~p", [Info]), {noreply, State}.
+
+-spec handle_message(Msg :: internal_msg(), State :: state()) ->
   {ok, NewState :: state()} | {Error :: {error, Reason :: atom()}, State :: state()}.
 
-handle_message(push_notification, Msg, #state{module = Mod, channel_state = S} = State) ->
-  {Resp, S1} = Mod:handle_subscription(#message{payload = Msg}, S),
+handle_message(Msg, #state{module = Mod, channel_state = S} = State) ->
+  {Resp, S1} = Mod:handle_message(Msg, S),
   {Resp, State#state{channel_state = S1}}.
 
 -spec terminate(Reason :: atom(), State :: state()) -> Void :: any().

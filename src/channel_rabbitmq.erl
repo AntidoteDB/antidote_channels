@@ -13,11 +13,11 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {channel, connection, exchange, handler, subscriber_tags}).
+-record(channel_state, {endpoint, connection, exchange, handler, subscriber_tags}).
 
 %% API
--export([start_link/1, publish/2, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, publish_async/2, add_subscriptions/2, handle_subscription/2, event_for_message/1, is_alive/1, get_network_config/1, terminate/2]).
+-export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
+-export([init_channel/1, send/2, subscribe/2, handle_message/2, unmarshal/2, is_alive/1, get_network_config/1, terminate/2]).
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), ct:print(X, Y)).
@@ -44,10 +44,6 @@ start_link(Config) ->
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
--spec publish(Pid :: pid(), Msg :: pub_sub_msg()) -> ok.
-publish(Pid, Msg) ->
-  antidote_channel:publish(Pid, Msg).
-
 is_alive(rabbitmq_channel, Address) ->
   is_alive(Address).
 
@@ -68,10 +64,10 @@ get_network_config(ConfigMap) ->
     virtual_host = maps:get(virtual_host, ConfigMap, Default#amqp_params_network.virtual_host),
     host = maps:get(host, ConfigMap, Default#amqp_params_network.host),
     port = maps:get(port, ConfigMap, Default#amqp_params_network.port),
-    channel_max = maps:get(port, ConfigMap, Default#amqp_params_network.channel_max),
-    frame_max = maps:get(port, ConfigMap, Default#amqp_params_network.frame_max),
-    heartbeat = maps:get(port, ConfigMap, Default#amqp_params_network.heartbeat),
-    connection_timeout = maps:get(port, ConfigMap, Default#amqp_params_network.connection_timeout),
+    channel_max = maps:get(channel_max, ConfigMap, Default#amqp_params_network.channel_max),
+    frame_max = maps:get(frame_max, ConfigMap, Default#amqp_params_network.frame_max),
+    heartbeat = maps:get(heartbeat, ConfigMap, Default#amqp_params_network.heartbeat),
+    connection_timeout = maps:get(connection_timeout, ConfigMap, Default#amqp_params_network.connection_timeout),
     ssl_options = maps:get(ssl_options, ConfigMap, Default#amqp_params_network.ssl_options),
     % List of functions
     auth_mechanisms = maps:get(auth_mechanisms, ConfigMap, Default#amqp_params_network.auth_mechanisms),
@@ -95,7 +91,7 @@ init_channel(#pub_sub_channel_config{
   topics = Topics,
   namespace = Namespace0,
   network_params = #amqp_params_network{} = NetworkParams,
-  subscriber = Process}
+  handler = Process}
 ) ->
   Namespace =
     case Namespace0 of
@@ -107,26 +103,27 @@ init_channel(#pub_sub_channel_config{
           {ok, Con} ->
             CRes = amqp_connection:open_channel(Con),
             case CRes of
-              {ok, Chan} -> {ok, Con, Chan};
+              {ok, Endpt} -> {ok, Con, Endpt};
               ErrorChan -> ErrorChan
             end;
           ErrorCon -> ErrorCon
         end,
 
   case Res of
-    {ok, Connection, Channel} ->
-      amqp_channel:register_return_handler(Channel, self()),
+    {ok, Connection, Endpoint} ->
+      amqp_channel:register_return_handler(Endpoint, self()),
       QueueParams = #'queue.declare'{exclusive = true},
       {ok, Queues} =
         case Topics of
-          [] -> fanout_declare(Channel, Namespace, QueueParams);
-          _ -> direct_routing_declare(Channel, Namespace, Topics, QueueParams)
+          [] -> fanout_declare(Endpoint, Namespace, QueueParams);
+          _ -> direct_routing_declare(Endpoint, Namespace, Topics, QueueParams)
         end,
       Tags = lists:foldl(fun(Q, TAcc) ->
-        {ok, Tag} = subscribe_queue(Channel, Q, self()),
+        {ok, Tag} = subscribe_queue(Endpoint, Q, self()),
         [Tag | TAcc] end, [], Queues),
+      trigger_event(chan_started, #{channel => self()}, Process),
       {ok, #channel_state{
-        channel = Channel,
+        endpoint = Endpoint,
         connection = Connection,
         handler = Process,
         exchange = Namespace,
@@ -138,34 +135,48 @@ init_channel(#pub_sub_channel_config{
 init_channel(_Config) ->
   {error, bad_configuration}.
 
-add_subscriptions(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
+subscribe(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
 
-publish_async(#pub_sub_msg{topic = Topic, payload = Payload}, #channel_state{channel = Channel, exchange = Exchange} = State) ->
+send(#pub_sub_msg{topic = Topic} = Msg, #channel_state{endpoint = Endpoint, exchange = Exchange} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
-  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload}),
+  amqp_channel:cast(Endpoint, Publish, #amqp_msg{payload = marshal(Msg)}),
+  {ok, State};
+
+send(_Msg, State) -> {ok, State}.
+
+handle_message(
+    #internal_msg{payload = #pub_sub_msg{payload = Payload}, meta = #{delivery_tag := Tag}},
+    #channel_state{endpoint = Endpoint, handler = Handler} = State) ->
+  cast_handler(Handler, Payload),
+  amqp_channel:cast(Endpoint, #'basic.ack'{delivery_tag = Tag}),
   {ok, State}.
 
-handle_subscription(
-    #message{payload = {#'basic.deliver'{delivery_tag = Tag}, #amqp_msg{payload = Content}}},
-    #channel_state{channel = Channel, handler = S} = State) ->
-  Resp = gen_server:call(S, Content),
-  case Resp of
-    {error, _Reason} -> amqp_channel:cast(Channel, #'basic.nack'{delivery_tag = Tag});
-    _ -> amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag})
-  end,
-  {ok, State}.
+%call_handler(Handler, Payload) ->
+%  gen_server:call(Handler, Payload).
 
-terminate(_Reason, #channel_state{connection = Connection, channel = Channel, subscriber_tags = Ts}) ->
+cast_handler(Handler, Payload) ->
+  gen_server:cast(Handler, Payload).
+
+
+terminate(Reason, #channel_state{connection = Connection, endpoint = Endpoint, subscriber_tags = Ts, handler = Handler}) ->
   lists:foreach(fun(T) ->
-    amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T})
+    amqp_channel:call(Endpoint, #'basic.cancel'{consumer_tag = T})
                 end, Ts),
-  amqp_channel:close(Channel),
+
+  trigger_event(chan_closed, #{reason => Reason}, Handler),
+
+  amqp_channel:close(Endpoint),
   amqp_connection:close(Connection).
 
 
-event_for_message({#'basic.deliver'{}, #'amqp_msg'{}}) -> {ok, push_notification};
-event_for_message({#'basic.consume_ok'{}, _}) -> {ok, do_nothing};
-event_for_message(_) -> {error, bad_request}.
+unmarshal({#'basic.deliver'{delivery_tag = Tag}, #'amqp_msg'{payload = Msg}} = M, _) ->
+  {deliver, #internal_msg{payload = binary_to_term(Msg), meta = #{delivery_tag => Tag}}, M};
+unmarshal(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
+unmarshal(_, _) -> {error, bad_request}.
+
+marshal(Msg) ->
+  term_to_binary(Msg).
+
 
 -spec is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 is_alive(_Address) ->
@@ -214,3 +225,9 @@ subscribe_queue(Channel, Queue, Subscriber) ->
   Sub = #'basic.consume'{queue = Queue},
   #'basic.consume_ok'{consumer_tag = Tag} = amqp_channel:subscribe(Channel, Sub, Subscriber),
   {ok, Tag}.
+
+trigger_event(Event, Attributes, Handler) ->
+  case Handler of
+    undefined -> ok;
+    _ -> gen_server:cast(Handler, {Event, Attributes})
+  end.
