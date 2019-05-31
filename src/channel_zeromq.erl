@@ -28,8 +28,8 @@
 
 
 -ifndef(TEST).
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
+-define(LOG_INFO(X, Y), lager:info(X, Y)).
+-define(LOG_INFO(X), lager:info(X)).
 -endif.
 
 -ifdef(TEST).
@@ -127,6 +127,7 @@ init_channel(#pub_sub_channel_config{
           erlzmq:send(Endpoint, <<>>),
           timer:sleep(100)
       end,
+      ?LOG_INFO("Going to trigger event"),
       trigger_event(chan_started, #{channel => self()}, Handler),
       {ok, #channel_state{
         config = Config,
@@ -369,6 +370,7 @@ get_topic_term(NamespaceTopic, Namespace) ->
   end.
 
 trigger_event(Event, Attributes, Handler) ->
+  ?LOG_INFO("Handler is ~p", [Handler]),
   case Handler of
     undefined -> ok;
     _ -> gen_server:cast(Handler, {Event, Attributes})
