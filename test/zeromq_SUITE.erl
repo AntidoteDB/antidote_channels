@@ -60,7 +60,7 @@ bind_exception_test(_Config) ->
 
 test_socket(_Config) ->
   %TODO improve test; Also check that it is working in Antidote
-  false = antidote_channel:is_alive(channel_zeromq, {{127, 0, 0, 1}, ?PORT}).
+  false = antidote_channel:is_alive(channel_zeromq, pub_sub, #{address => {{127, 0, 0, 1}, ?PORT}}).
 
 basic_rpc_test(_Config) ->
 

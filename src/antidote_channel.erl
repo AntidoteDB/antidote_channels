@@ -30,17 +30,17 @@
 -include_lib("antidote_channel.hrl").
 
 -ifndef(TEST).
--define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), ct:print(X)).
+-define(LOG_INFO(X, Y), lager:info(X, Y)).
+-define(LOG_INFO(X), lager:info(X)).
 -endif.
 
 -ifdef(TEST).
--define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), ct:print(X)).
+-define(LOG_INFO(X, Y), lager:info(X, Y)).
+-define(LOG_INFO(X), lager:info(X)).
 -endif.
 
 %% API
--export([start_link/1, send/2, subscribe/2, is_alive/2, get_config/1, stop/1]).
+-export([start_link/1, send/2, subscribe/2, is_alive/3, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -48,11 +48,11 @@
 
 -behaviour(gen_server).
 
--record(state, {module, config, handler, channel, channel_state, buffer = []}).
+-record(state, {module, config, handler, channel_state, buffer = []}).
 
 -type event() :: deliver | do_nothing | buffer.
 
--type state() :: #state{module :: module(), config :: channel_config(), channel :: channel(), channel_state :: channel_state()}.
+-type state() :: #state{module :: module(), config :: channel_config(), channel_state :: channel_state()}.
 
 %%%===================================================================
 %%% Callback declarations
@@ -73,7 +73,7 @@
 -callback unmarshal(Info :: message_payload(), State :: channel_state()) -> {
   event(), message_payload()} | {event(), internal_msg(), message_payload()} | {error, Reason :: atom()}.
 
--callback is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+-callback is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
 
 %%%===================================================================
 %%% API
@@ -103,10 +103,10 @@ send(Pid, Msg) ->
 subscribe(Pid, Topics) ->
   gen_server:cast(Pid, {add_subscriptions, Topics}).
 
--spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+-spec is_alive(ChannelType :: channel_type(), Pattern :: atom(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
-is_alive(ChannelType, Address) ->
-  ChannelType:is_alive(Address).
+is_alive(ChannelType, Pattern, Address) ->
+  ChannelType:is_alive(Pattern, Address).
 
 -spec stop(Pid :: pid()) -> ok.
 
@@ -125,20 +125,22 @@ get_config(#{module := Mod, pattern := Pattern, network_params := NetworkConfig}
   end.
 
 get_config(pub_sub, Mod, ConfigMap, NetworkConfig) ->
+  Default = #pub_sub_channel_config{},
   #pub_sub_channel_config{
     module = Mod,
-    topics = maps:get(topics, ConfigMap, #pub_sub_channel_config.topics),
-    namespace = maps:get(namespace, ConfigMap, #pub_sub_channel_config.namespace),
-    handler = maps:get(handler, ConfigMap, #pub_sub_channel_config.handler),
+    topics = maps:get(topics, ConfigMap, Default#pub_sub_channel_config.topics),
+    namespace = maps:get(namespace, ConfigMap, Default#pub_sub_channel_config.namespace),
+    handler = maps:get(handler, ConfigMap, Default#pub_sub_channel_config.handler),
     network_params = NetworkConfig
   };
 
 get_config(rpc, Mod, ConfigMap, NetworkConfig) ->
+  Default = #rpc_channel_config{},
   #rpc_channel_config{
     module = Mod,
-    handler = maps:get(handler, ConfigMap, #rpc_channel_config.handler),
-    load_balanced = maps:get(load_balanced, ConfigMap, #rpc_channel_config.load_balanced),
-    async = maps:get(async, ConfigMap, #rpc_channel_config.async),
+    handler = maps:get(handler, ConfigMap, Default#rpc_channel_config.handler),
+    load_balanced = maps:get(load_balanced, ConfigMap, Default#rpc_channel_config.load_balanced),
+    async = maps:get(async, ConfigMap, Default#rpc_channel_config.async),
     network_params = NetworkConfig
   };
 
@@ -170,8 +172,8 @@ init([Mod, Config]) ->
   {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
   {stop, Reason :: term(), NewState :: term()}.
 
-handle_call({is_alive, Address}, _, #state{module = Mod} = State) ->
-  {reply, Mod:is_alive(Address), State};
+handle_call({is_alive, Pattern, Attributes}, _, #state{module = Mod} = State) ->
+  {reply, Mod:is_alive(Pattern, Attributes), State};
 
 handle_call({send, #rpc_msg{} = Msg}, _From, #state{module = Mod, channel_state = S} = State) ->
   Ref = make_ref(),

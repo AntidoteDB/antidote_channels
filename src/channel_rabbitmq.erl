@@ -17,16 +17,16 @@
 
 %% API
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, send/2, subscribe/2, handle_message/2, unmarshal/2, is_alive/1, get_network_config/1, terminate/2]).
+-export([init_channel/1, send/2, subscribe/2, handle_message/2, unmarshal/2, get_network_config/1, terminate/2]).
 
 -ifndef(TEST).
--define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), ct:print(X)).
+-define(LOG_INFO(X, Y), logger:info(X, Y)).
+-define(LOG_INFO(X), logger:info(X)).
 -endif.
 
 -ifdef(TEST).
--define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), ct:print(X)).
+-define(LOG_INFO(X, Y), lager:info(X, Y)).
+-define(LOG_INFO(X), lager:info(X)).
 -endif.
 
 
@@ -44,8 +44,8 @@ start_link(Config) ->
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
-is_alive(rabbitmq_channel, Address) ->
-  is_alive(Address).
+%is_alive(rabbitmq_channel, Address) ->
+%  is_alive(Address).
 
 
 -spec get_network_config(Pattern :: atom(), ConfigMap :: map()) -> #amqp_params_network{}.
@@ -178,8 +178,8 @@ marshal(Msg) ->
   term_to_binary(Msg).
 
 
--spec is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
-is_alive(_Address) ->
+-spec is_alive(Pattern :: atom(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+is_alive(_Pattern, _Address) ->
   %TODO
   false.
 

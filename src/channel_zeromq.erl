@@ -24,17 +24,17 @@
 
 %% API
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, subscribe/2, send/2, handle_message/2, unmarshal/2, is_alive/1, terminate/2]).
+-export([init_channel/1, subscribe/2, send/2, handle_message/2, unmarshal/2, terminate/2]).
 
 
 -ifndef(TEST).
--define(LOG_INFO(X, Y), lager:info(X, Y)).
--define(LOG_INFO(X), lager:info(X)).
+-define(LOG_INFO(X, Y), logger:info(X, Y)).
+-define(LOG_INFO(X), logger:info(X)).
 -endif.
 
 -ifdef(TEST).
--define(LOG_INFO(X, Y), ct:print(X, Y)).
--define(LOG_INFO(X), ct:print(X)).
+-define(LOG_INFO(X, Y), lager:info(X, Y)).
+-define(LOG_INFO(X), lager:info(X)).
 -endif.
 
 -define(ZMQ_TIMEOUT, 5000).
@@ -51,10 +51,10 @@
 start_link(Config) ->
   antidote_channel:start_link(Config#{module => channel_zeromq}).
 
--spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+%-spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
 
-is_alive(zeromq_channel, Address) ->
-  is_alive(Address).
+%is_alive(zeromq_channel, Address) ->
+%  is_alive(Address).
 
 -spec stop(Pid :: pid()) -> ok.
 
@@ -94,6 +94,15 @@ get_network_config_private(rpc, ConfigMap) ->
 %%% Callbacks
 %%%===================================================================
 
+get_context() ->
+  case whereis(zmq_context) of
+    undefined ->
+      ct:print("context undefined"),
+      zmq_context:start_link(),
+      zmq_context:get();
+    _ -> ct:print("context defined ~p", [zmq_context:get()]), zmq_context:get()
+  end.
+
 %%TODO: Create supervisor for channels?
 init_channel(#pub_sub_channel_config{
   topics = Topics,
@@ -105,7 +114,7 @@ init_channel(#pub_sub_channel_config{
   },
   handler = Handler} = Config
 ) ->
-  {ok, Context} = erlzmq:context(),
+  Context = get_context(),
 
   Res =
     case Port of
@@ -127,7 +136,6 @@ init_channel(#pub_sub_channel_config{
           erlzmq:send(Endpoint, <<>>),
           timer:sleep(100)
       end,
-      ?LOG_INFO("Going to trigger event"),
       trigger_event(chan_started, #{channel => self()}, Handler),
       {ok, #channel_state{
         config = Config,
@@ -151,7 +159,7 @@ init_channel(#rpc_channel_config{
     remote_port = RPort
   }
 } = Config) ->
-  {ok, Context} = erlzmq:context(),
+  Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [req, {active, true}]),
   ok = erlzmq:setsockopt(Socket, rcvtimeo, ?ZMQ_TIMEOUT),
   ConnString = connection_string({RHost, RPort}),
@@ -184,7 +192,7 @@ init_channel(#rpc_channel_config{
                end,
   SocketType = xrep,
 
-  {ok, Context} = erlzmq:context(),
+  Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [SocketType, {active, true}]),
   ConnString = connection_string({Host, Port}),
   Bind = erlzmq:bind(Socket, ConnString),
@@ -275,8 +283,9 @@ cast_handler(Handler, Payload) ->
   gen_server:cast(Handler, Payload).
 
 
-%TODO: cleanup channels. Replace pub/endpoint with endpoint
-terminate(Reason, #channel_state{context = C, subs = Subs, endpoint = Endpoint, handler = Handler}) ->
+%TODO: close context
+terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint, handler = Handler}) ->
+  ?LOG_INFO("CALL TERMINATE"),
   case Subs of
     undefined -> ok;
     _ -> lists:foreach(fun(Pi) -> erlzmq:close(Pi) end, Subs)
@@ -292,9 +301,9 @@ terminate(Reason, #channel_state{context = C, subs = Subs, endpoint = Endpoint, 
   case Endpoint of
     undefined -> ok;
     _ -> erlzmq:close(Endpoint)
-  end,
+  end.
 
-  erlzmq:term(C).
+%erlzmq:term(C).
 
 
 unmarshal({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
@@ -308,9 +317,9 @@ unmarshal(_, _) -> {error, bad_request}.
 marshal(Msg) ->
   term_to_binary(Msg).
 
--spec is_alive(Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
-is_alive(Address) ->
-  {ok, Context} = erlzmq:context(),
+-spec is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
+is_alive(pub_sub, #{address := Address}) ->
+  Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [sub, {active, false}]),
   ok = erlzmq:connect(Socket, connection_string(Address)),
   ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
@@ -320,8 +329,20 @@ is_alive(Address) ->
   case Res of
     {ok, _} -> true;
     _ -> false
-  end.
+  end;
 
+is_alive(rpc, #{address := Address, pingMsg := PingMsg}) ->
+  Context = get_context(),
+  {ok, Socket} = erlzmq:socket(Context, [req, {active, false}]),
+  ok = erlzmq:connect(Socket, connection_string(Address)),
+  ok = erlzmq:send(Socket, PingMsg),
+  ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
+  Res = erlzmq:recv(Socket),
+  erlzmq:close(Socket),
+  case Res of
+    {ok, _} -> true;
+    _ -> false
+  end.
 
 %%%===================================================================
 %%% Private Functions
@@ -370,7 +391,6 @@ get_topic_term(NamespaceTopic, Namespace) ->
   end.
 
 trigger_event(Event, Attributes, Handler) ->
-  ?LOG_INFO("Handler is ~p", [Handler]),
   case Handler of
     undefined -> ok;
     _ -> gen_server:cast(Handler, {Event, Attributes})
