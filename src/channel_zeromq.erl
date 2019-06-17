@@ -327,7 +327,7 @@ is_alive(pub_sub, #{address := Address}) ->
   Res = erlzmq:recv(Socket),
   erlzmq:close(Socket),
   case Res of
-    {ok, _} -> true;
+    {ok, Msg} -> {true, Msg};
     _ -> false
   end;
 
@@ -340,7 +340,7 @@ is_alive(rpc, #{address := Address, pingMsg := PingMsg}) ->
   Res = erlzmq:recv(Socket),
   erlzmq:close(Socket),
   case Res of
-    {ok, _} -> true;
+    {ok, Msg} -> {true, Msg};
     _ -> false
   end.
 
