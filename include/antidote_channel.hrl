@@ -41,6 +41,7 @@
 
 -type message() :: pub_sub_msg() | rpc_msg().
 
+-record(ping, {msg}).
 
 -record(pub_sub_channel_config, {
   module :: atom(),

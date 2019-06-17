@@ -38,6 +38,8 @@
 -endif.
 
 -define(ZMQ_TIMEOUT, 5000).
+-define(PING_TIMEOUT, 2000).
+
 
 %%%===================================================================
 %%% API
@@ -251,14 +253,25 @@ handle_message(
     nok -> {{error, topic_not_subscribed}, State}
   end;
 
+
+%TODO: make ping work with non load-balanced server
+handle_message(#internal_msg{
+  payload = #rpc_msg{request_id = RId, request_payload = #ping{}},
+  meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
+}, State) ->
+  erlzmq:send(Socket, Id, [sndmore]),
+  erlzmq:send(Socket, <<>>, [sndmore]),
+  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}})),
+  {ok, State};
+
 handle_message(
     #internal_msg{
       payload = #rpc_msg{request_id = RId, request_payload = Payload},
       meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
     },
     #channel_state{handler = S} = State) ->
-
   Resp = call_handler(S, Payload),
+
   erlzmq:send(Socket, Id, [sndmore]),
   erlzmq:send(Socket, <<>>, [sndmore]),
   erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = Resp})),
@@ -272,9 +285,8 @@ handle_message(
     #channel_state{handler = S} = State) ->
   {cast_handler(S, Payload), State};
 
-handle_message(Msg, State) -> {{error, {message_not_supported, Msg}, State}}.
 
-%TODO: can handle Response to close channel.
+handle_message(Msg, State) -> {{error, {message_not_supported, Msg}, State}}.
 
 call_handler(Handler, Payload) ->
   gen_server:call(Handler, Payload).
@@ -311,6 +323,7 @@ unmarshal({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
 unmarshal({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
   {buffer, M};
 unmarshal({zmq, Socket, Msg, Flags} = M, _State) ->
+
   {deliver, #internal_msg{payload = binary_to_term(Msg), meta = #{socket => Socket, flags => Flags}}, M};
 unmarshal(_, _) -> {error, bad_request}.
 
@@ -331,18 +344,30 @@ is_alive(pub_sub, #{address := Address}) ->
     _ -> false
   end;
 
-is_alive(rpc, #{address := Address, pingMsg := PingMsg}) ->
-  Context = get_context(),
-  {ok, Socket} = erlzmq:socket(Context, [req, {active, false}]),
-  ok = erlzmq:connect(Socket, connection_string(Address)),
-  ok = erlzmq:send(Socket, PingMsg),
-  ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
-  Res = erlzmq:recv(Socket),
-  erlzmq:close(Socket),
-  case Res of
-    {ok, Msg} -> {true, Msg};
-    _ -> false
-  end.
+is_alive(rpc, #{address := {Host, Port}, pingMsg := PingMsg}) ->
+  Config = #{
+    module => channel_zeromq,
+    pattern => rpc,
+    %TODO: when sync is available make blocking call on send
+    async => true,
+    handler => self(),
+    network_params => #{
+      remote_host => Host,
+      remote_port => Port
+    }
+  },
+
+  {ok, Pid} = antidote_channel:start_link(Config),
+  antidote_channel:send(Pid, #rpc_msg{request_payload = #ping{msg = PingMsg}}),
+  ReceiveLoop = fun Rec() -> receive
+                               {_, #ping{msg = pong}} -> true;
+                               _ -> Rec()
+                             after ?PING_TIMEOUT -> false
+                             end
+                end,
+  Res = ReceiveLoop(),
+  antidote_channel:stop(Pid),
+  Res.
 
 %%%===================================================================
 %%% Private Functions
