@@ -33,7 +33,8 @@
 %% API
 -export([start/0, start_link/0, stop/1, init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
--record(state, {msg_buffer = [] :: list()}).
+-record(state, {msg_buffer = [] :: list(), channel}).
+
 
 start() ->
   gen_server:start(?MODULE, [], []).
@@ -46,9 +47,15 @@ stop(Pid) ->
 
 init([]) -> {ok, #state{}}.
 
+handle_call(_, _, State) -> {stop, ok, State}.
+
+handle_cast({chan_started, #{channel := Channel}}, #state{} = State) ->
+  {noreply, State#state{channel = Channel}};
+
 %%TODO: document the accepted replies
-handle_call(foo, _From, State) ->
-  {reply, bar, State}.
+handle_cast(#rpc_msg{request_id = RId, request_payload = foo}, #state{channel = Channel} = State) ->
+  antidote_channel:reply(Channel, RId, bar),
+  {noreply, State};
 
 handle_cast(_Msg, State) ->
   {noreply, State}.

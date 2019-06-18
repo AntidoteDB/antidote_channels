@@ -40,7 +40,7 @@
 -endif.
 
 %% API
--export([start_link/1, send/2, subscribe/2, is_alive/3, get_config/1, stop/1]).
+-export([start_link/1, send/2, send/3, reply/3, subscribe/2, is_alive/3, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -48,11 +48,11 @@
 
 -behaviour(gen_server).
 
--record(state, {module, config, handler, channel_state, buffer = []}).
+-record(state, {module, config, handler, channel_state, buffer = [], pending = #{}}).
 
 -type event() :: deliver | do_nothing | buffer.
 
--type state() :: #state{module :: module(), config :: channel_config(), channel_state :: channel_state()}.
+-type state() :: #state{module :: module(), config :: map(), channel_state :: channel_state()}.
 
 %%%===================================================================
 %%% Callback declarations
@@ -61,7 +61,7 @@
 -callback init_channel(Config :: channel_config()) ->
   {ok, State :: channel_state()} | {error, Reason :: term()}.
 
--callback send(Msg :: message(), State :: channel_state()) ->
+-callback send(Msg :: message(), Params :: map(), State :: channel_state()) ->
   {ok, State :: channel_state()}.
 
 -callback subscribe(Topics :: [binary()], State :: channel_state()) ->
@@ -75,11 +75,13 @@
 
 -callback is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
 
+-callback reply(RequestId :: reference(), Reply :: any(), State :: channel_state()) -> true | false.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
 
--spec start_link(Config :: channel_config()) ->
+-spec start_link(Config :: map()) ->
   {ok, Pid :: pid()} |
   ignore |
   {error, Reason :: atom()}.
@@ -87,7 +89,7 @@
 start_link(#{module := Mod} = ConfigMap) ->
   case get_config(ConfigMap) of
     {error, _} = E -> E;
-    Config -> gen_server:start_link(?MODULE, [Mod, Config], [])
+    Config -> gen_server:start_link(?MODULE, [Mod, Config, ConfigMap], [])
   end;
 
 start_link(ConfigMap) ->
@@ -96,7 +98,14 @@ start_link(ConfigMap) ->
 -spec send(Pid :: pid(), Msg :: message()) -> ok.
 
 send(Pid, Msg) ->
-  gen_server:call(Pid, {send, Msg}).
+  gen_server:call(Pid, {send, Msg, #{}}).
+
+-spec send(Pid :: pid(), Msg :: message(), Prams :: map()) -> ok.
+send(Pid, Msg, Params) ->
+  gen_server:call(Pid, {send, Msg, Params}).
+
+reply(Pid, RequestId, Msg) ->
+  gen_server:call(Pid, {reply, RequestId, Msg}).
 
 -spec subscribe(Pid :: pid(), Topics :: [binary()]) -> ok.
 
@@ -155,11 +164,11 @@ get_config(_Pattern, _Mod, _ConfigMap, _NetworkConfig) ->
   {ok, State :: term()} | {ok, State :: term(), timeout() | hibernate | {continue, term()}} |
   {stop, Reason :: term()} | ignore.
 
-init([Mod, Config]) ->
+init([Mod, Config, ConfigMap]) ->
   Res = Mod:init_channel(Config),
   case Res of
     {ok, InitState} ->
-      {ok, #state{module = Mod, config = Config, channel_state = InitState}};
+      {ok, #state{module = Mod, config = ConfigMap, channel_state = InitState}};
     {error, Reason} -> {stop, Reason}
   end.
 
@@ -175,14 +184,22 @@ init([Mod, Config]) ->
 handle_call({is_alive, Pattern, Attributes}, _, #state{module = Mod} = State) ->
   {reply, Mod:is_alive(Pattern, Attributes), State};
 
-handle_call({send, #rpc_msg{} = Msg}, _From, #state{module = Mod, channel_state = S} = State) ->
+handle_call({send, #rpc_msg{} = Msg, Params}, From, #state{module = Mod, channel_state = S, pending = Pending} = State) ->
   Ref = make_ref(),
-  {ok, S1} = Mod:send(Msg#rpc_msg{request_id = Ref}, S),
-  {reply, Ref, State#state{channel_state = S1}};
+  {ok, S1} = Mod:send(Msg#rpc_msg{request_id = Ref}, Params, S),
+  case is_sync(Params, State) of
+    true ->
+      {noreply, State#state{channel_state = S1, pending = Pending#{Ref => From}}};
+    _ -> {reply, Ref, State#state{channel_state = S1}}
+  end;
 
-handle_call({send, #pub_sub_msg{} = Msg}, _From, #state{module = Mod, channel_state = S} = State) ->
-  {ok, S1} = Mod:send(Msg, S),
+handle_call({send, #pub_sub_msg{} = Msg, Params}, _From, #state{module = Mod, channel_state = S} = State) ->
+  {ok, S1} = Mod:send(Msg, Params, S),
   {reply, ok, State#state{channel_state = S1}};
+
+handle_call({reply, RequestId, Reply}, _From, #state{module = Mod, channel_state = S} = State) ->
+  {Res, S1} = Mod:reply(RequestId, Reply, S),
+  {reply, Res, State#state{channel_state = S1}};
 
 handle_call({add_subscriptions, Topics}, _From, #state{module = Mod, channel_state = S} = State) ->
   {ok, S1} = Mod:add_subscriptions(Topics, S),
@@ -218,6 +235,15 @@ handle_info(Info, State) ->
 -spec handle_message(Msg :: internal_msg(), State :: state()) ->
   {ok, NewState :: state()} | {Error :: {error, Reason :: atom()}, State :: state()}.
 
+handle_message(
+    Msg = #internal_msg{
+      payload = #rpc_msg{request_id = RId, request_payload = undefined, reply_payload = P}},
+    #state{module = Mod, channel_state = S, pending = Pending} = State) ->
+  case maps:find(RId, Pending) of
+    {ok, To} -> gen_server:reply(To, P), {ok, State#state{pending = maps:remove(RId, Pending)}};
+    _ -> {R, Si} = Mod:handle_message(Msg, S), {R, State#state{channel_state = Si}}
+  end;
+
 handle_message(Msg, #state{module = Mod, channel_state = S} = State) ->
   {Resp, S1} = Mod:handle_message(Msg, S),
   {Resp, State#state{channel_state = S1}}.
@@ -232,3 +258,9 @@ terminate(Reason, #state{module = Mod, channel_state = S} = _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
+
+is_sync(_Params, #state{config = #{async := false}}) ->
+  true;
+
+is_sync(Params, _State) ->
+  maps:is_key(wait, Params).

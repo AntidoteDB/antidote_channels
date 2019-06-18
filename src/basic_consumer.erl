@@ -9,7 +9,11 @@
 -module(basic_consumer).
 -author("vbalegas").
 
+-include("antidote_channel.hrl").
+
 -behaviour(gen_server).
+
+
 
 %% API
 -export([start/0, start_link/0, stop/1, init/1, handle_call/3, handle_cast/2, handle_info/2]).
@@ -31,15 +35,22 @@ init([]) -> {ok, #state{}}.
 handle_call(Msg, _From, #state{} = State) ->
   {stop, {unhandled_message, Msg}, ok, State}.
 
-handle_cast({chan_started, #{channel := Channel}}, #state{} = State) ->
-  {noreply, State#state{channel = Channel}};
+%handle_cast({chan_started, #{channel := Channel}}, #state{} = State) ->
+%  {noreply, State#state{channel = Channel}};
 
-handle_cast({chan_closed, #{reason := Reason}}, #state{} = State) ->
-  {stop, Reason, State};
+%handle_cast({chan_closed, #{reason := Reason}}, #state{} = State) ->
+%  {stop, Reason, State};
 
-handle_cast(Msg, #state{msg_buffer = Buff} = State) ->
+handle_cast(#rpc_msg{reply_payload = Msg}, #state{msg_buffer = Buff} = State) ->
   Buff1 = [Msg | Buff],
-  {noreply, State#state{msg_buffer = Buff1}}.
+  {noreply, State#state{msg_buffer = Buff1}};
+
+handle_cast(#pub_sub_msg{payload = Msg}, #state{msg_buffer = Buff} = State) ->
+  Buff1 = [Msg | Buff],
+  {noreply, State#state{msg_buffer = Buff1}};
+
+handle_cast(_Msg, State) ->
+  {noreply, State}.
 
 handle_info(Msg, #state{msg_buffer = Buff} = State) ->
   Buff1 = [Msg | Buff],

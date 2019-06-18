@@ -19,12 +19,14 @@
   handler :: pid(),
   context,
   subs,
-  endpoint
+  endpoint,
+  pending = #{},
+  async
 }).
 
 %% API
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, subscribe/2, send/2, handle_message/2, unmarshal/2, terminate/2]).
+-export([init_channel/1, subscribe/2, send/3, reply/3, handle_message/2, unmarshal/2, terminate/2]).
 
 
 -ifndef(TEST).
@@ -99,13 +101,13 @@ get_network_config_private(rpc, ConfigMap) ->
 get_context() ->
   case whereis(zmq_context) of
     undefined ->
-      ct:print("context undefined"),
-      zmq_context:start_link(),
-      zmq_context:get();
-    _ -> ct:print("context defined ~p", [zmq_context:get()]), zmq_context:get()
-  end.
+      zmq_context:start_link();
+    _ -> ok
+  end,
+  zmq_context:get().
 
 %%TODO: Create supervisor for channels?
+%%Server handler is async by default
 init_channel(#pub_sub_channel_config{
   topics = Topics,
   namespace = Namespace,
@@ -114,7 +116,8 @@ init_channel(#pub_sub_channel_config{
     port = Port,
     publishersAddresses = Pubs
   },
-  handler = Handler} = Config
+  handler = Handler
+} = Config
 ) ->
   Context = get_context(),
 
@@ -138,16 +141,18 @@ init_channel(#pub_sub_channel_config{
           erlzmq:send(Endpoint, <<>>),
           timer:sleep(100)
       end,
-      trigger_event(chan_started, #{channel => self()}, Handler),
-      {ok, #channel_state{
+      State = #channel_state{
         config = Config,
         endpoint = Endpoint,
         context = Context,
         handler = Handler,
         namespace = Namespace,
         topics = Topics,
-        subs = Subs
-      }};
+        subs = Subs,
+        async = true
+      },
+      trigger_event(chan_started, #{channel => self()}, State),
+      {ok, State};
     {{error, _} = E, _} -> E;
     Error -> Error
   end;
@@ -155,12 +160,14 @@ init_channel(#pub_sub_channel_config{
 
 init_channel(#rpc_channel_config{
   handler = Handler,
-  async = true,
+  async = Async,
   network_params = #rpc_channel_zmq_params{
     remote_host = RHost,
-    remote_port = RPort
-  }
-} = Config) ->
+    remote_port = RPort,
+    host = undefined,
+    port = undefined
+  },
+  } = Config) ->
   Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [req, {active, true}]),
   ok = erlzmq:setsockopt(Socket, rcvtimeo, ?ZMQ_TIMEOUT),
@@ -168,13 +175,15 @@ init_channel(#rpc_channel_config{
   Connect = erlzmq:connect(Socket, ConnString),
   case Connect of
     ok ->
-      trigger_event(chan_started, #{channel => self()}, Handler),
-      {ok, #channel_state{
+      State = #channel_state{
         config = Config,
         context = Context,
         handler = Handler,
-        endpoint = Socket
-      }};
+        endpoint = Socket,
+        async = Async
+      },
+      trigger_event(chan_started, #{channel => self()}, State),
+      {ok, State};
     {{error, _} = E, _} -> E;
     Error -> Error
   end;
@@ -183,11 +192,12 @@ init_channel(#rpc_channel_config{
   handler = Handler,
   load_balanced = LoadBalanced,
   network_params = #rpc_channel_zmq_params{
+    remote_host = undefined,
+    remote_port = undefined,
     host = Host,
     port = Port
-  }
-} = Config) ->
-
+  },
+  } = Config) ->
   SocketType = case LoadBalanced of
                  true -> xrep;
                  false -> rep
@@ -200,13 +210,15 @@ init_channel(#rpc_channel_config{
   Bind = erlzmq:bind(Socket, ConnString),
   case Bind of
     ok ->
-      trigger_event(chan_started, #{channel => self()}, Handler),
-      {ok, #channel_state{
+      State = #channel_state{
         config = Config,
         context = Context,
         handler = Handler,
-        endpoint = Socket
-      }};
+        endpoint = Socket,
+        async = true
+      },
+      trigger_event(chan_started, #{channel => self()}, State),
+      {ok, State};
     {{error, _} = E, _} -> E;
     Error -> Error
   end;
@@ -219,15 +231,25 @@ subscribe(Topics, #channel_state{subs = Subs, namespace = Namespace} = State) ->
     subscribe_topics(Sub, Namespace, Topics) end, Subs),
   {ok, State}.
 
-send(#pub_sub_msg{topic = Topic} = Msg, #channel_state{endpoint = Endpoint, namespace = Namespace} = State) ->
+send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, namespace = Namespace} = State) ->
   TopicBinary = get_topic_with_namespace(Namespace, Topic),
   ok = erlzmq:send(Endpoint, TopicBinary, [sndmore]),
   ok = erlzmq:send(Endpoint, marshal(Msg)),
   {ok, State};
 
-send(#rpc_msg{} = Msg, #channel_state{endpoint = Endpoint} = State) ->
+send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint} = State) ->
   ok = erlzmq:send(Endpoint, marshal(Msg)),
   {ok, State}.
+
+reply(RId, Reply, #channel_state{pending = Pending} = State) ->
+  Res = case maps:find(RId, Pending) of
+          {ok, {Socket, Id, _}} ->
+            erlzmq:send(Socket, Id, [sndmore]),
+            erlzmq:send(Socket, <<>>, [sndmore]),
+            erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = Reply}));
+          R -> R
+        end,
+  {Res, State#channel_state{pending = maps:remove(RId, Pending)}}.
 
 is_subscribed(NamespaceTopicIn, Namespace, Topics) ->
   case get_topic_term(NamespaceTopicIn, Namespace) of
@@ -240,10 +262,29 @@ is_subscribed(NamespaceTopicIn, Namespace, Topics) ->
     _ -> ?LOG_INFO("Error parsing topic ~p.", [NamespaceTopicIn]), nok
   end.
 
+%TODO: make ping work with non load-balanced server
+handle_message(#internal_msg{
+  payload = #rpc_msg{request_id = RId, request_payload = #ping{}},
+  meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
+}, State) ->
+  erlzmq:send(Socket, Id, [sndmore]),
+  erlzmq:send(Socket, <<>>, [sndmore]),
+  %TODO: send header and then message.
+  %TODO: Make marshalling optional.
+  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}})),
+  {ok, State};
 
 handle_message(
     #internal_msg{
-      payload = #pub_sub_msg{payload = Payload},
+      payload = #rpc_msg{reply_payload = #ping{msg = pong} = Payload}
+    },
+    #channel_state{handler = Handler} = State) ->
+  Handler ! Payload,
+  {ok, State};
+
+handle_message(
+    #internal_msg{
+      payload = #pub_sub_msg{} = Payload,
       meta = #{buffered := [_, {zmq, _, NamespaceTopic, _}]}
     },
     #channel_state{handler = S, namespace = Namespace, topics = Topics} = State) ->
@@ -253,57 +294,37 @@ handle_message(
     nok -> {{error, topic_not_subscribed}, State}
   end;
 
+handle_message(
+    #internal_msg{
+      payload = #rpc_msg{request_id = RId, reply_payload = undefined} = Payload,
+      meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
+    },
+    #channel_state{handler = Handler, pending = Pending} = State) ->
+  Res = cast_handler(Handler, Payload),
+  {Res, State#channel_state{pending = Pending#{RId => {Socket, Id, RId}}}};
 
-%TODO: make ping work with non load-balanced server
-handle_message(#internal_msg{
-  payload = #rpc_msg{request_id = RId, request_payload = #ping{}},
-  meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
-}, State) ->
-  erlzmq:send(Socket, Id, [sndmore]),
-  erlzmq:send(Socket, <<>>, [sndmore]),
-  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}})),
-  {ok, State};
 
 handle_message(
     #internal_msg{
-      payload = #rpc_msg{request_id = RId, request_payload = Payload},
-      meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
+      payload = #rpc_msg{request_id = _RId, request_payload = undefined} = Payload
     },
-    #channel_state{handler = S} = State) ->
-  Resp = call_handler(S, Payload),
+    #channel_state{handler = Handler} = State) ->
+  Res = cast_handler(Handler, Payload),
+  {Res, State};
 
-  erlzmq:send(Socket, Id, [sndmore]),
-  erlzmq:send(Socket, <<>>, [sndmore]),
-  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = Resp})),
-  case Resp of
-    stop -> {ok, State};%TODO
-    _ -> {ok, State}
-  end;
-
-handle_message(
-    #internal_msg{payload = #rpc_msg{reply_payload = Payload}},
-    #channel_state{handler = S} = State) ->
-  {cast_handler(S, Payload), State};
-
-
-handle_message(Msg, State) -> {{error, {message_not_supported, Msg}, State}}.
-
-call_handler(Handler, Payload) ->
-  gen_server:call(Handler, Payload).
+handle_message(Msg, State) -> {{error, {message_not_supported, Msg}}, State}.
 
 cast_handler(Handler, Payload) ->
   gen_server:cast(Handler, Payload).
 
-
 %TODO: close context
-terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint, handler = Handler}) ->
-  ?LOG_INFO("CALL TERMINATE"),
+terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint} = State) ->
   case Subs of
     undefined -> ok;
     _ -> lists:foreach(fun(Pi) -> erlzmq:close(Pi) end, Subs)
   end,
 
-  trigger_event(chan_closed, #{reason => Reason}, Handler),
+  trigger_event(chan_closed, #{reason => Reason}, State),
 
   case Endpoint of
     undefined -> ok;
@@ -317,13 +338,11 @@ terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint,
 
 %erlzmq:term(C).
 
-
 unmarshal({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
   {buffer, M};
 unmarshal({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
   {buffer, M};
 unmarshal({zmq, Socket, Msg, Flags} = M, _State) ->
-
   {deliver, #internal_msg{payload = binary_to_term(Msg), meta = #{socket => Socket, flags => Flags}}, M};
 unmarshal(_, _) -> {error, bad_request}.
 
@@ -344,7 +363,7 @@ is_alive(pub_sub, #{address := Address}) ->
     _ -> false
   end;
 
-is_alive(rpc, #{address := {Host, Port}, pingMsg := PingMsg}) ->
+is_alive(rpc, #{address := {Host, Port}}) ->
   Config = #{
     module => channel_zeromq,
     pattern => rpc,
@@ -358,9 +377,9 @@ is_alive(rpc, #{address := {Host, Port}, pingMsg := PingMsg}) ->
   },
 
   {ok, Pid} = antidote_channel:start_link(Config),
-  antidote_channel:send(Pid, #rpc_msg{request_payload = #ping{msg = PingMsg}}),
+  antidote_channel:send(Pid, #rpc_msg{request_payload = #ping{}}),
   ReceiveLoop = fun Rec() -> receive
-                               {_, #ping{msg = pong}} -> true;
+                               #ping{msg = pong} -> true;
                                _ -> Rec()
                              after ?PING_TIMEOUT -> false
                              end
@@ -415,8 +434,11 @@ get_topic_term(NamespaceTopic, Namespace) ->
     Topic -> {ok, Topic}
   end.
 
-trigger_event(Event, Attributes, Handler) ->
+
+trigger_event(Event, Attributes, #channel_state{async = true, handler = Handler}) ->
   case Handler of
     undefined -> ok;
     _ -> gen_server:cast(Handler, {Event, Attributes})
-  end.
+  end;
+
+trigger_event(_Event, _Attributes, #channel_state{}) -> ok.

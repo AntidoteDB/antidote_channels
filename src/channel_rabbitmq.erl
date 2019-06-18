@@ -17,7 +17,7 @@
 
 %% API
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, send/2, subscribe/2, handle_message/2, unmarshal/2, get_network_config/1, terminate/2]).
+-export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, unmarshal/2, get_network_config/1, terminate/2]).
 
 -ifndef(TEST).
 -define(LOG_INFO(X, Y), logger:info(X, Y)).
@@ -43,10 +43,6 @@ start_link(Config) ->
 -spec stop(Pid :: pid()) -> ok.
 stop(Pid) ->
   antidote_channel:stop(Pid).
-
-%is_alive(rabbitmq_channel, Address) ->
-%  is_alive(Address).
-
 
 -spec get_network_config(Pattern :: atom(), ConfigMap :: map()) -> #amqp_params_network{}.
 get_network_config(pub_sub, ConfigMap) ->
@@ -137,15 +133,17 @@ init_channel(_Config) ->
 
 subscribe(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
 
-send(#pub_sub_msg{topic = Topic} = Msg, #channel_state{endpoint = Endpoint, exchange = Exchange} = State) ->
+send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, exchange = Exchange} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
   amqp_channel:cast(Endpoint, Publish, #amqp_msg{payload = marshal(Msg)}),
   {ok, State};
 
-send(_Msg, State) -> {ok, State}.
+send(_Msg, _Params, State) -> {ok, State}.
+
+reply(_RId, _Msg, State) -> {{error, not_implemented}, State}.
 
 handle_message(
-    #internal_msg{payload = #pub_sub_msg{payload = Payload}, meta = #{delivery_tag := Tag}},
+    #internal_msg{payload = #pub_sub_msg{} = Payload, meta = #{delivery_tag := Tag}},
     #channel_state{endpoint = Endpoint, handler = Handler} = State) ->
   cast_handler(Handler, Payload),
   amqp_channel:cast(Endpoint, #'basic.ack'{delivery_tag = Tag}),

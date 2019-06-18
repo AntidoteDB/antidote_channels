@@ -11,13 +11,15 @@
 -export([
   bind_exception_test/1,
   test_socket/1,
-  basic_rpc_test/1
+  basic_rpc_test/1,
+  rpc_wait_test/1
 ]).
 
 all() -> [
-  bind_exception_test,
-  test_socket,
-  basic_rpc_test
+  %bind_exception_test,
+  %test_socket,
+  %basic_rpc_test,
+  rpc_wait_test
 ].
 
 -define(PORT, 7866).
@@ -33,7 +35,9 @@ init_per_testcase(bind_exception_test, Config) -> Config;
 
 init_per_testcase(test_socket, Config) -> Config;
 
-init_per_testcase(basic_rpc_test, Config) -> Config.
+init_per_testcase(basic_rpc_test, Config) -> Config;
+
+init_per_testcase(rpc_wait_test, Config) -> Config.
 
 end_per_testcase(init_close_test, _Config) -> ok;
 
@@ -41,7 +45,9 @@ end_per_testcase(bind_exception_test, _Config) -> ok;
 
 end_per_testcase(test_socket, _Config) -> ok;
 
-end_per_testcase(basic_rpc_test, _Config) -> ok.
+end_per_testcase(basic_rpc_test, _Config) -> ok;
+
+end_per_testcase(rpc_wait_test, Config) -> Config.
 
 
 bind_exception_test(_Config) ->
@@ -82,10 +88,10 @@ basic_rpc_test(_Config) ->
   ServerConfig = #{
     module => channel_zeromq,
     pattern => rpc,
-    load_balanced => true,
+    load_balanced => true, % TODO: Make test with false, make test that uses load balancing round-robin (e.g. each server return a different number)
     handler => Server,
     network_params => #{
-      host => {127, 0, 0, 1},
+      host => {0, 0, 0, 0},
       port => ?PORT
     }
   },
@@ -94,8 +100,57 @@ basic_rpc_test(_Config) ->
   {ok, ClientChan} = antidote_channel:start_link(ClientConfig),
 
   _ReqId = antidote_channel:send(ClientChan, #rpc_msg{request_payload = foo}),
-  timer:sleep(500),
+  timer:sleep(5000),
   {_, _, Buff} = sys:get_state(Client),
   true = lists:member(bar, Buff).
 
-% duplex_rpc_test()
+rpc_wait_test(_Config) ->
+
+  {ok, Client2} = basic_consumer:start_link(),
+
+  Client1Config = #{
+    module => channel_zeromq,
+    pattern => rpc,
+    async => false,
+    network_params => #{
+      remote_host => {127, 0, 0, 1},
+      remote_port => ?PORT
+    }
+  },
+
+  Client2Config = #{
+    module => channel_zeromq,
+    pattern => rpc,
+    async => true,
+    handler => Client2,
+    network_params => #{
+      remote_host => {127, 0, 0, 1},
+      remote_port =>?PORT
+    }
+  },
+
+  {ok, Server} = basic_server:start_link(),
+
+  ServerConfig = #{
+    module => channel_zeromq,
+    pattern => rpc,
+    load_balanced => true,
+    handler => Server,
+    network_params => #{
+      host => {0, 0, 0, 0},
+      port =>?PORT
+    }
+  },
+
+  {ok, _ServerChan} = antidote_channel:start_link(ServerConfig),
+  {ok, Client1Chan} = antidote_channel:start_link(Client1Config),
+  {ok, Client2Chan} = antidote_channel:start_link(Client2Config),
+
+  bar = antidote_channel:send(Client1Chan, #rpc_msg{request_payload = foo}, #{}),
+  bar = antidote_channel:send(Client2Chan, #rpc_msg{request_payload = foo}, #{wait => true}),
+  {_, _, Buff} = sys:get_state(Client2),
+  false = lists:member(bar, Buff),
+  antidote_channel:send(Client2Chan, #rpc_msg{request_payload = foo}),
+  timer:sleep(1000),
+  {_, _, Buff1} = sys:get_state(Client2),
+  true = lists:member(bar, Buff1).
