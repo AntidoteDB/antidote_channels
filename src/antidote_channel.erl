@@ -29,16 +29,6 @@
 -module(antidote_channel).
 -include_lib("antidote_channel.hrl").
 
--ifndef(TEST).
--define(LOG_INFO(X, Y), lager:info(X, Y)).
--define(LOG_INFO(X), lager:info(X)).
--endif.
-
--ifdef(TEST).
--define(LOG_INFO(X, Y), lager:info(X, Y)).
--define(LOG_INFO(X), lager:info(X)).
--endif.
-
 %% API
 -export([start_link/1, send/2, send/3, reply/3, subscribe/2, is_alive/3, get_config/1, stop/1]).
 
@@ -53,6 +43,9 @@
 -type event() :: deliver | do_nothing | buffer.
 
 -type state() :: #state{module :: module(), config :: map(), channel_state :: channel_state()}.
+
+-define(LOG_INFO(X, Y), logger:info(X, Y)).
+-define(LOG_INFO(X), logger:info(X)).
 
 %%%===================================================================
 %%% Callback declarations
@@ -75,7 +68,7 @@
 
 -callback is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
 
--callback reply(RequestId :: reference(), Reply :: any(), State :: channel_state()) -> true | false.
+-callback reply(RequestId :: reference(), Reply :: any(), State :: channel_state()) -> any().
 
 %%%===================================================================
 %%% API
@@ -205,7 +198,8 @@ handle_call({add_subscriptions, Topics}, _From, #state{module = Mod, channel_sta
   {ok, S1} = Mod:add_subscriptions(Topics, S),
   {noreply, State#state{channel_state = S1}};
 
-handle_call(_, _, State) -> {noreply, State}.
+handle_call(Any, _, State) ->
+  {reply, {error, {unhandled_message, Any}}, State}.
 
 handle_cast(Info, State) ->
   ?LOG_INFO("Unknown message received ~p", [Info]), {noreply, State}.

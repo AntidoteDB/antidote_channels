@@ -16,9 +16,9 @@
 ]).
 
 all() -> [
-  %bind_exception_test,
-  %test_socket,
-  %basic_rpc_test,
+  bind_exception_test,
+  test_socket,
+  basic_rpc_test,
   rpc_wait_test
 ].
 
@@ -96,13 +96,15 @@ basic_rpc_test(_Config) ->
     }
   },
 
-  {ok, _ServerChan} = antidote_channel:start_link(ServerConfig),
+  {ok, ServerChan} = antidote_channel:start_link(ServerConfig),
   {ok, ClientChan} = antidote_channel:start_link(ClientConfig),
 
   _ReqId = antidote_channel:send(ClientChan, #rpc_msg{request_payload = foo}),
-  timer:sleep(5000),
+  timer:sleep(500),
   {_, _, Buff} = sys:get_state(Client),
-  true = lists:member(bar, Buff).
+  true = lists:member(bar, Buff),
+  antidote_channel:stop(ServerChan),
+  antidote_channel:stop(ClientChan).
 
 rpc_wait_test(_Config) ->
 
@@ -142,7 +144,7 @@ rpc_wait_test(_Config) ->
     }
   },
 
-  {ok, _ServerChan} = antidote_channel:start_link(ServerConfig),
+  {ok, ServerChan} = antidote_channel:start_link(ServerConfig),
   {ok, Client1Chan} = antidote_channel:start_link(Client1Config),
   {ok, Client2Chan} = antidote_channel:start_link(Client2Config),
 
@@ -153,4 +155,7 @@ rpc_wait_test(_Config) ->
   antidote_channel:send(Client2Chan, #rpc_msg{request_payload = foo}),
   timer:sleep(1000),
   {_, _, Buff1} = sys:get_state(Client2),
-  true = lists:member(bar, Buff1).
+  true = lists:member(bar, Buff1),
+  antidote_channel:stop(ServerChan),
+  antidote_channel:stop(Client1Chan),
+  antidote_channel:stop(Client2Chan).

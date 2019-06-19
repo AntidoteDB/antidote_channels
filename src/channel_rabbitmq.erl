@@ -19,18 +19,9 @@
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
 -export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, unmarshal/2, get_network_config/1, terminate/2]).
 
--ifndef(TEST).
+-define(DEFAULT_EXCHANGE, <<"antidote_exchange">>).
 -define(LOG_INFO(X, Y), logger:info(X, Y)).
 -define(LOG_INFO(X), logger:info(X)).
--endif.
-
--ifdef(TEST).
--define(LOG_INFO(X, Y), lager:info(X, Y)).
--define(LOG_INFO(X), lager:info(X)).
--endif.
-
-
--define(DEFAULT_EXCHANGE, <<"antidote_exchange">>).
 
 -spec start_link(Config :: channel_config()) ->
   {ok, Pid :: atom()} |
@@ -176,7 +167,7 @@ marshal(Msg) ->
   term_to_binary(Msg).
 
 
--spec is_alive(Pattern :: atom(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+-spec is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
 is_alive(_Pattern, _Address) ->
   %TODO
   false.

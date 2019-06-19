@@ -33,7 +33,7 @@
 
 -record(internal_msg, {payload, meta = #{}}).
 -record(pub_sub_msg, {topic :: binary(), payload :: term()}).
--record(rpc_msg, {request_id :: reference(), request_payload :: term(), reply_payload :: term()}).
+-record(rpc_msg, {request_id :: reference() | undefined, request_payload :: term(), reply_payload :: term()}).
 
 -type internal_msg() :: #internal_msg{}.
 -type pub_sub_msg() :: #pub_sub_msg{}.
@@ -53,9 +53,9 @@
 
 -record(rpc_channel_config, {
   module :: atom(),
-  handler :: pid(),
-  load_balanced :: boolean(),
-  async :: boolean(),
+  handler :: pid() | undefined,
+  load_balanced = false :: boolean(),
+  async = true :: boolean(),
   network_params :: term()
 }).
 

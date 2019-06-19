@@ -16,7 +16,7 @@
   config :: channel_config(),
   namespace = <<>> :: binary(),
   topics = [] :: [binary()],
-  handler :: pid(),
+  handler :: pid() | undefined,
   context,
   subs,
   endpoint,
@@ -28,20 +28,10 @@
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
 -export([init_channel/1, subscribe/2, send/3, reply/3, handle_message/2, unmarshal/2, terminate/2]).
 
-
--ifndef(TEST).
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
--endif.
-
--ifdef(TEST).
--define(LOG_INFO(X, Y), lager:info(X, Y)).
--define(LOG_INFO(X), lager:info(X)).
--endif.
-
 -define(ZMQ_TIMEOUT, 5000).
 -define(PING_TIMEOUT, 2000).
-
+-define(LOG_INFO(X, Y), logger:info(X, Y)).
+-define(LOG_INFO(X), logger:info(X)).
 
 %%%===================================================================
 %%% API
@@ -109,14 +99,14 @@ get_context() ->
 %%TODO: Create supervisor for channels?
 %%Server handler is async by default
 init_channel(#pub_sub_channel_config{
+  handler = Handler,
   topics = Topics,
   namespace = Namespace,
   network_params = #pub_sub_zmq_params{
     host = Host,
     port = Port,
     publishersAddresses = Pubs
-  },
-  handler = Handler
+  }
 } = Config
 ) ->
   Context = get_context(),
@@ -166,8 +156,8 @@ init_channel(#rpc_channel_config{
     remote_port = RPort,
     host = undefined,
     port = undefined
-  },
-  } = Config) ->
+  }
+} = Config) ->
   Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [req, {active, true}]),
   ok = erlzmq:setsockopt(Socket, rcvtimeo, ?ZMQ_TIMEOUT),
@@ -196,8 +186,8 @@ init_channel(#rpc_channel_config{
     remote_port = undefined,
     host = Host,
     port = Port
-  },
-  } = Config) ->
+  }
+} = Config) ->
   SocketType = case LoadBalanced of
                  true -> xrep;
                  false -> rep
