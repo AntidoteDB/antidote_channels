@@ -23,8 +23,7 @@
   endpoint,
   pending = #{},
   async,
-  marshaller = fun encoders:binary/1,
-  unmarshaller = fun decoders:binary/1
+  marshalling = {fun encoders:binary/1, fun decoders:binary/1}
 }).
 
 %% API
@@ -107,10 +106,10 @@ init_channel(#pub_sub_channel_config{
     host = Host,
     port = Port,
     publishersAddresses = Pubs,
-    marshalling = {Marshaller, Unmarshaller}
+    marshalling = Marshalling
   }
 } = Config
-) ->
+) when Host =/= undefined, Port =/= undefined ->
   Context = get_context(),
 
   Res =
@@ -141,10 +140,9 @@ init_channel(#pub_sub_channel_config{
         namespace = Namespace,
         topics = Topics,
         subs = Subs,
-        %%Server is async
+        %%pub_sub is always async
         async = true,
-        marshaller = Marshaller,
-        unmarshaller = Unmarshaller
+        marshalling = Marshalling
       },
       trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
@@ -159,11 +157,9 @@ init_channel(#rpc_channel_config{
   network_params = #rpc_channel_zmq_params{
     remote_host = RHost,
     remote_port = RPort,
-    host = undefined,
-    port = undefined,
-    marshalling = {Marshaller, Unmarshaller}
+    marshalling = Marshalling
   }
-} = Config) ->
+} = Config) when RHost =/= undefined, RPort =/= undefined ->
   Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [req, {active, true}]),
   ok = erlzmq:setsockopt(Socket, rcvtimeo, ?ZMQ_TIMEOUT),
@@ -177,8 +173,7 @@ init_channel(#rpc_channel_config{
         handler = Handler,
         endpoint = Socket,
         async = Async,
-        marshaller = Marshaller,
-        unmarshaller = Unmarshaller
+        marshalling = Marshalling
       },
       trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
@@ -190,13 +185,11 @@ init_channel(#rpc_channel_config{
   handler = Handler,
   load_balanced = LoadBalanced,
   network_params = #rpc_channel_zmq_params{
-    remote_host = undefined,
-    remote_port = undefined,
     host = Host,
     port = Port,
-    marshalling = {Marshaller, Unmarshaller}
+    marshalling = Marshalling
   }
-} = Config) ->
+} = Config) when Host =/= undefined, Port =/= undefined ->
   SocketType = case LoadBalanced of
                  true -> xrep;
                  false -> rep
@@ -214,9 +207,9 @@ init_channel(#rpc_channel_config{
         context = Context,
         handler = Handler,
         endpoint = Socket,
+        %%server is always async
         async = true,
-        marshaller = Marshaller,
-        unmarshaller = Unmarshaller
+        marshalling = Marshalling
       },
       trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
@@ -232,17 +225,17 @@ subscribe(Topics, #channel_state{subs = Subs, namespace = Namespace} = State) ->
     subscribe_topics(Sub, Namespace, Topics) end, Subs),
   {ok, State}.
 
-send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, namespace = Namespace, marshaller = Func} = State) ->
+send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, namespace = Namespace, marshalling = {Func, _}} = State) ->
   TopicBinary = get_topic_with_namespace(Namespace, Topic),
   ok = erlzmq:send(Endpoint, TopicBinary, [sndmore]),
   ok = erlzmq:send(Endpoint, marshal(Msg, Func)),
   {ok, State};
 
-send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint, marshaller = Func} = State) ->
+send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint, marshalling = {Func, _}} = State) ->
   ok = erlzmq:send(Endpoint, marshal(Msg, Func)),
   {ok, State}.
 
-reply(RId, Reply, #channel_state{pending = Pending, marshaller = Func} = State) ->
+reply(RId, Reply, #channel_state{pending = Pending, marshalling = {Func, _}} = State) ->
   Res = case maps:find(RId, Pending) of
           {ok, {Socket, Id, _}} ->
             erlzmq:send(Socket, Id, [sndmore]),
@@ -256,7 +249,7 @@ reply(RId, Reply, #channel_state{pending = Pending, marshaller = Func} = State) 
 handle_message(#internal_msg{
   payload = #rpc_msg{request_id = RId, request_payload = #ping{}},
   meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
-}, #channel_state{marshaller = Func} = State) ->
+}, #channel_state{marshalling = {Func, _}} = State) ->
   erlzmq:send(Socket, Id, [sndmore]),
   erlzmq:send(Socket, <<>>, [sndmore]),
   erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}}, Func)),
@@ -327,7 +320,7 @@ process_message({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
   {buffer, M};
 process_message({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
   {buffer, M};
-process_message({zmq, Socket, Msg, Flags} = M, #channel_state{unmarshaller = Func}) ->
+process_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, Func}}) ->
   {deliver, #internal_msg{payload = unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
 process_message(_, _) -> {error, bad_request}.
 

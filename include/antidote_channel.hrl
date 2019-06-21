@@ -95,8 +95,11 @@
     fun amqp_auth_mechanisms:amqplain/3],
   client_properties = [],
   socket_options = [],
-  marshalling = {fun encoders:binary/1, fun decoders:binary/1}}
-).
+  marshalling = {fun encoders:binary/1, fun decoders:binary/1},
+  prefetchCount = 1,
+  rpc_queue_name, % set a name to create a server. BitString
+  remote_rpc_queue_name
+}).
 
 -type channel() :: term().
 -type channel_type() :: atom(). %zeromq_channel | rabbitmq_channel
