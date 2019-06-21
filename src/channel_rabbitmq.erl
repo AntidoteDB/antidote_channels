@@ -13,11 +13,20 @@
 -behavior(antidote_channel).
 
 %subscriber must be a gen_server. We can put proxy instead, to abstract the handler.
--record(channel_state, {endpoint, connection, exchange, handler, subscriber_tags}).
+-record(channel_state, {
+  endpoint,
+  connection,
+  exchange,
+  handler,
+  subscriber_tags,
+  marshaller = fun encoders:binary/1,
+  unmarshaller = fun decoders:binary/1
+}).
 
+%%TODO: Avoid starting multiple connections
 %% API
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, unmarshal/2, get_network_config/1, terminate/2]).
+-export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, process_message/2, get_network_config/1, terminate/2]).
 
 -define(DEFAULT_EXCHANGE, <<"antidote_exchange">>).
 -define(LOG_INFO(X, Y), logger:info(X, Y)).
@@ -35,33 +44,34 @@ start_link(Config) ->
 stop(Pid) ->
   antidote_channel:stop(Pid).
 
--spec get_network_config(Pattern :: atom(), ConfigMap :: map()) -> #amqp_params_network{}.
+-spec get_network_config(Pattern :: atom(), ConfigMap :: map()) -> #rabbitmq_network{}.
 get_network_config(pub_sub, ConfigMap) ->
   get_network_config(ConfigMap);
 
 get_network_config(_Other, _ConfigMap) ->
   {error, pattern_not_supported}.
 
--spec get_network_config(ConfigMap :: map()) -> #amqp_params_network{}.
+-spec get_network_config(ConfigMap :: map()) -> #rabbitmq_network{}.
 get_network_config(ConfigMap) ->
-  Default = #amqp_params_network{},
-  Default#amqp_params_network{
-    username = maps:get(username, ConfigMap, Default#amqp_params_network.username),
-    password = maps:get(password, ConfigMap, Default#amqp_params_network.password),
-    virtual_host = maps:get(virtual_host, ConfigMap, Default#amqp_params_network.virtual_host),
-    host = maps:get(host, ConfigMap, Default#amqp_params_network.host),
-    port = maps:get(port, ConfigMap, Default#amqp_params_network.port),
-    channel_max = maps:get(channel_max, ConfigMap, Default#amqp_params_network.channel_max),
-    frame_max = maps:get(frame_max, ConfigMap, Default#amqp_params_network.frame_max),
-    heartbeat = maps:get(heartbeat, ConfigMap, Default#amqp_params_network.heartbeat),
-    connection_timeout = maps:get(connection_timeout, ConfigMap, Default#amqp_params_network.connection_timeout),
-    ssl_options = maps:get(ssl_options, ConfigMap, Default#amqp_params_network.ssl_options),
+  Default = #rabbitmq_network{},
+  Default#rabbitmq_network{
+    username = maps:get(username, ConfigMap, Default#rabbitmq_network.username),
+    password = maps:get(password, ConfigMap, Default#rabbitmq_network.password),
+    virtual_host = maps:get(virtual_host, ConfigMap, Default#rabbitmq_network.virtual_host),
+    host = maps:get(host, ConfigMap, Default#rabbitmq_network.host),
+    port = maps:get(port, ConfigMap, Default#rabbitmq_network.port),
+    channel_max = maps:get(channel_max, ConfigMap, Default#rabbitmq_network.channel_max),
+    frame_max = maps:get(frame_max, ConfigMap, Default#rabbitmq_network.frame_max),
+    heartbeat = maps:get(heartbeat, ConfigMap, Default#rabbitmq_network.heartbeat),
+    connection_timeout = maps:get(connection_timeout, ConfigMap, Default#rabbitmq_network.connection_timeout),
+    ssl_options = maps:get(ssl_options, ConfigMap, Default#rabbitmq_network.ssl_options),
     % List of functions
-    auth_mechanisms = maps:get(auth_mechanisms, ConfigMap, Default#amqp_params_network.auth_mechanisms),
+    auth_mechanisms = maps:get(auth_mechanisms, ConfigMap, Default#rabbitmq_network.auth_mechanisms),
     % List
-    client_properties = maps:get(client_properties, ConfigMap, Default#amqp_params_network.client_properties),
+    client_properties = maps:get(client_properties, ConfigMap, Default#rabbitmq_network.client_properties),
     % List
-    socket_options = maps:get(socket_options, ConfigMap, Default#amqp_params_network.socket_options)
+    socket_options = maps:get(socket_options, ConfigMap, Default#rabbitmq_network.socket_options),
+    marshalling = maps:get(marshalling, ConfigMap, Default#rabbitmq_network.marshalling)
   }.
 
 
@@ -77,7 +87,7 @@ init_channel(#pub_sub_channel_config{topics = [], namespace = <<>>}) ->
 init_channel(#pub_sub_channel_config{
   topics = Topics,
   namespace = Namespace0,
-  network_params = #amqp_params_network{} = NetworkParams,
+  network_params = #rabbitmq_network{} = NetworkParams,
   handler = Process}
 ) ->
   Namespace =
@@ -124,9 +134,9 @@ init_channel(_Config) ->
 
 subscribe(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
 
-send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, exchange = Exchange} = State) ->
+send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, exchange = Exchange, marshaller = Func} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
-  amqp_channel:cast(Endpoint, Publish, #amqp_msg{payload = marshal(Msg)}),
+  amqp_channel:cast(Endpoint, Publish, #amqp_msg{payload = Func(Msg)}),
   {ok, State};
 
 send(_Msg, _Params, State) -> {ok, State}.
@@ -158,13 +168,10 @@ terminate(Reason, #channel_state{connection = Connection, endpoint = Endpoint, s
   amqp_connection:close(Connection).
 
 
-unmarshal({#'basic.deliver'{delivery_tag = Tag}, #'amqp_msg'{payload = Msg}} = M, _) ->
-  {deliver, #internal_msg{payload = binary_to_term(Msg), meta = #{delivery_tag => Tag}}, M};
-unmarshal(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
-unmarshal(_, _) -> {error, bad_request}.
-
-marshal(Msg) ->
-  term_to_binary(Msg).
+process_message({#'basic.deliver'{delivery_tag = Tag}, #'amqp_msg'{payload = Msg}} = M, #channel_state{unmarshaller = Func} = _State) ->
+  {deliver, #internal_msg{payload = Func(Msg), meta = #{delivery_tag => Tag}}, M};
+process_message(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
+process_message(_, _) -> {error, bad_request}.
 
 
 -spec is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.

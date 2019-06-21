@@ -69,14 +69,34 @@
   remote_host :: inet:ip_address() | undefined,
   remote_port :: inet:port_number()| undefined,
   host :: inet:ip_address() | undefined,
-  port :: inet:port_number() | undefined
+  port :: inet:port_number() | undefined,
+  marshalling = {fun encoders:binary/1, fun decoders:binary/1}
 }).
 
 -record(pub_sub_zmq_params, {
   host = {0, 0, 0, 0} :: inet:ip_address(),
   port :: inet:port_number() | undefined,
-  publishersAddresses = [] :: [{inet:ip_address(), inet:port_number()}]
+  publishersAddresses = [] :: [{inet:ip_address(), inet:port_number()}],
+  marshalling = {fun encoders:binary/1, fun decoders:binary/1}
 }).
+
+-record(rabbitmq_network, {username = <<"guest">>,
+  password = <<"guest">>,
+  virtual_host = <<"/">>,
+  host = "localhost",
+  port = undefined,
+  channel_max = 2047,
+  frame_max = 0,
+  heartbeat = 10,
+  connection_timeout = 60000,
+  ssl_options = none,
+  auth_mechanisms =
+  [fun amqp_auth_mechanisms:plain/3,
+    fun amqp_auth_mechanisms:amqplain/3],
+  client_properties = [],
+  socket_options = [],
+  marshalling = {fun encoders:binary/1, fun decoders:binary/1}}
+).
 
 -type channel() :: term().
 -type channel_type() :: atom(). %zeromq_channel | rabbitmq_channel

@@ -59,6 +59,10 @@ handle_cast(#rpc_msg{request_id = RId, request_payload = foo}, #state{channel = 
   antidote_channel:reply(Channel, RId, bar),
   {noreply, State};
 
+handle_cast(#rpc_msg{request_id = RId, request_payload = <<131, 100, 0, 3, 102, 111, 111>>}, #state{channel = Channel} = State) ->
+  antidote_channel:reply(Channel, RId, term_to_binary(bar)),
+  {noreply, State};
+
 handle_cast(_Msg, State) ->
   {noreply, State}.
 

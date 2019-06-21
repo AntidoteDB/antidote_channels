@@ -63,7 +63,7 @@
 -callback handle_message(Msg :: internal_msg(), State :: channel_state()) ->
   {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
--callback unmarshal(Info :: message_payload(), State :: channel_state()) -> {
+-callback process_message(Info :: message_payload(), State :: channel_state()) -> {
   event(), message_payload()} | {event(), internal_msg(), message_payload()} | {error, Reason :: atom()}.
 
 -callback is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
@@ -210,7 +210,7 @@ handle_cast(Info, State) ->
   {stop, Reason :: term(), NewState :: state()}.
 
 handle_info(Info, #state{module = Mod, channel_state = S, buffer = Buff} = State) ->
-  case Mod:unmarshal(Info, S) of
+  case Mod:process_message(Info, S) of
     {do_nothing, _} -> {noreply, State};
     {buffer, M} -> {noreply, State#state{buffer = [M | Buff]}};
     {deliver, #internal_msg{meta = Meta} = Msg, Original} ->

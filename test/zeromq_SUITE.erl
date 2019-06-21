@@ -12,14 +12,16 @@
   bind_exception_test/1,
   test_socket/1,
   basic_rpc_test/1,
-  rpc_wait_test/1
+  rpc_wait_test/1,
+  bin_rpc_test/1
 ]).
 
 all() -> [
   bind_exception_test,
   test_socket,
   basic_rpc_test,
-  rpc_wait_test
+  rpc_wait_test,
+  bin_rpc_test
 ].
 
 -define(PORT, 7866).
@@ -37,7 +39,9 @@ init_per_testcase(test_socket, Config) -> Config;
 
 init_per_testcase(basic_rpc_test, Config) -> Config;
 
-init_per_testcase(rpc_wait_test, Config) -> Config.
+init_per_testcase(rpc_wait_test, Config) -> Config;
+
+init_per_testcase(bin_rpc_test, Config) -> Config.
 
 end_per_testcase(init_close_test, _Config) -> ok;
 
@@ -47,7 +51,9 @@ end_per_testcase(test_socket, _Config) -> ok;
 
 end_per_testcase(basic_rpc_test, _Config) -> ok;
 
-end_per_testcase(rpc_wait_test, Config) -> Config.
+end_per_testcase(rpc_wait_test, Config) -> Config;
+
+end_per_testcase(bin_rpc_test, Config) -> Config.
 
 
 bind_exception_test(_Config) ->
@@ -159,3 +165,41 @@ rpc_wait_test(_Config) ->
   antidote_channel:stop(ServerChan),
   antidote_channel:stop(Client1Chan),
   antidote_channel:stop(Client2Chan).
+
+bin_rpc_test(_Config) ->
+  %TODO: Negotiate content type instead of using parameters.
+  {ok, Client} = basic_consumer:start_link(),
+
+  ClientConfig = #{
+    module => channel_zeromq,
+    pattern => rpc,
+    async => false,
+    handler => Client,
+    network_params => #{
+      remote_host => {127, 0, 0, 1},
+      remote_port => ?PORT,
+      marshalling => {fun encoders:dummy/1, fun decoders:dummy/1}
+    }
+  },
+
+  {ok, Server} = basic_server:start_link(),
+
+  ServerConfig = #{
+    module => channel_zeromq,
+    pattern => rpc,
+    load_balanced => true, % TODO: Make test with false, make test that uses load balancing round-robin (e.g. each server return a different number)
+    handler => Server,
+    network_params => #{
+      host => {0, 0, 0, 0},
+      port =>?PORT,
+      marshalling => {fun encoders:dummy/1, fun decoders:dummy/1}
+    }
+  },
+
+  {ok, ServerChan} = antidote_channel:start_link(ServerConfig),
+  {ok, ClientChan} = antidote_channel:start_link(ClientConfig),
+
+  Res = antidote_channel:send(ClientChan, #rpc_msg{request_payload = <<131, 100, 0, 3, 102, 111, 111>>}),
+  bar = erlang:binary_to_term(Res),
+  antidote_channel:stop(ServerChan),
+  antidote_channel:stop(ClientChan).

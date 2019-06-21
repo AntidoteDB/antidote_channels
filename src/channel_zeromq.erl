@@ -8,6 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(channel_zeromq).
 -include_lib("antidote_channel.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -behavior(antidote_channel).
 
@@ -21,17 +22,24 @@
   subs,
   endpoint,
   pending = #{},
-  async
+  async,
+  marshaller = fun encoders:binary/1,
+  unmarshaller = fun decoders:binary/1
 }).
 
 %% API
 -export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, subscribe/2, send/3, reply/3, handle_message/2, unmarshal/2, terminate/2]).
+-export([init_channel/1, subscribe/2, send/3, reply/3, handle_message/2, process_message/2, terminate/2]).
 
 -define(ZMQ_TIMEOUT, 5000).
 -define(PING_TIMEOUT, 2000).
+-define(HEADER_LENGTH_BYTES, 4).
 -define(LOG_INFO(X, Y), logger:info(X, Y)).
 -define(LOG_INFO(X), logger:info(X)).
+
+-ifdef(TEST).
+-compile(export_all).
+-endif.
 
 %%%===================================================================
 %%% API
@@ -71,7 +79,8 @@ get_network_config_private(pub_sub, ConfigMap) ->
   Default#pub_sub_zmq_params{
     host = maps:get(host, ConfigMap, Default#pub_sub_zmq_params.host),
     port = maps:get(port, ConfigMap, Default#pub_sub_zmq_params.port),
-    publishersAddresses = maps:get(publishersAddresses, ConfigMap, Default#pub_sub_zmq_params.publishersAddresses)
+    publishersAddresses = maps:get(publishersAddresses, ConfigMap, Default#pub_sub_zmq_params.publishersAddresses),
+    marshalling = maps:get(marshalling, ConfigMap, Default#pub_sub_zmq_params.marshalling)
   };
 
 get_network_config_private(rpc, ConfigMap) ->
@@ -80,7 +89,8 @@ get_network_config_private(rpc, ConfigMap) ->
     host = maps:get(host, ConfigMap, Default#rpc_channel_zmq_params.host),
     port = maps:get(port, ConfigMap, Default#rpc_channel_zmq_params.port),
     remote_host = maps:get(remote_host, ConfigMap, Default#rpc_channel_zmq_params.remote_host),
-    remote_port = maps:get(remote_port, ConfigMap, Default#rpc_channel_zmq_params.remote_port)
+    remote_port = maps:get(remote_port, ConfigMap, Default#rpc_channel_zmq_params.remote_port),
+    marshalling = maps:get(marshalling, ConfigMap, Default#rpc_channel_zmq_params.marshalling)
   }.
 
 
@@ -88,16 +98,7 @@ get_network_config_private(rpc, ConfigMap) ->
 %%% Callbacks
 %%%===================================================================
 
-get_context() ->
-  case whereis(zmq_context) of
-    undefined ->
-      zmq_context:start_link();
-    _ -> ok
-  end,
-  zmq_context:get().
-
 %%TODO: Create supervisor for channels?
-%%Server handler is async by default
 init_channel(#pub_sub_channel_config{
   handler = Handler,
   topics = Topics,
@@ -105,7 +106,8 @@ init_channel(#pub_sub_channel_config{
   network_params = #pub_sub_zmq_params{
     host = Host,
     port = Port,
-    publishersAddresses = Pubs
+    publishersAddresses = Pubs,
+    marshalling = {Marshaller, Unmarshaller}
   }
 } = Config
 ) ->
@@ -139,7 +141,10 @@ init_channel(#pub_sub_channel_config{
         namespace = Namespace,
         topics = Topics,
         subs = Subs,
-        async = true
+        %%Server is async
+        async = true,
+        marshaller = Marshaller,
+        unmarshaller = Unmarshaller
       },
       trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
@@ -155,7 +160,8 @@ init_channel(#rpc_channel_config{
     remote_host = RHost,
     remote_port = RPort,
     host = undefined,
-    port = undefined
+    port = undefined,
+    marshalling = {Marshaller, Unmarshaller}
   }
 } = Config) ->
   Context = get_context(),
@@ -170,7 +176,9 @@ init_channel(#rpc_channel_config{
         context = Context,
         handler = Handler,
         endpoint = Socket,
-        async = Async
+        async = Async,
+        marshaller = Marshaller,
+        unmarshaller = Unmarshaller
       },
       trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
@@ -185,7 +193,8 @@ init_channel(#rpc_channel_config{
     remote_host = undefined,
     remote_port = undefined,
     host = Host,
-    port = Port
+    port = Port,
+    marshalling = {Marshaller, Unmarshaller}
   }
 } = Config) ->
   SocketType = case LoadBalanced of
@@ -205,7 +214,9 @@ init_channel(#rpc_channel_config{
         context = Context,
         handler = Handler,
         endpoint = Socket,
-        async = true
+        async = true,
+        marshaller = Marshaller,
+        unmarshaller = Unmarshaller
       },
       trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
@@ -221,47 +232,34 @@ subscribe(Topics, #channel_state{subs = Subs, namespace = Namespace} = State) ->
     subscribe_topics(Sub, Namespace, Topics) end, Subs),
   {ok, State}.
 
-send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, namespace = Namespace} = State) ->
+send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, namespace = Namespace, marshaller = Func} = State) ->
   TopicBinary = get_topic_with_namespace(Namespace, Topic),
   ok = erlzmq:send(Endpoint, TopicBinary, [sndmore]),
-  ok = erlzmq:send(Endpoint, marshal(Msg)),
+  ok = erlzmq:send(Endpoint, marshal(Msg, Func)),
   {ok, State};
 
-send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint} = State) ->
-  ok = erlzmq:send(Endpoint, marshal(Msg)),
+send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint, marshaller = Func} = State) ->
+  ok = erlzmq:send(Endpoint, marshal(Msg, Func)),
   {ok, State}.
 
-reply(RId, Reply, #channel_state{pending = Pending} = State) ->
+reply(RId, Reply, #channel_state{pending = Pending, marshaller = Func} = State) ->
   Res = case maps:find(RId, Pending) of
           {ok, {Socket, Id, _}} ->
             erlzmq:send(Socket, Id, [sndmore]),
             erlzmq:send(Socket, <<>>, [sndmore]),
-            erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = Reply}));
+            erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = Reply}, Func));
           R -> R
         end,
   {Res, State#channel_state{pending = maps:remove(RId, Pending)}}.
-
-is_subscribed(NamespaceTopicIn, Namespace, Topics) ->
-  case get_topic_term(NamespaceTopicIn, Namespace) of
-    {ok, Topic} ->
-      case lists:member(Topic, Topics) of
-        true -> ok;
-        false when Topics == [] -> ok;
-        false -> nok
-      end;
-    _ -> ?LOG_INFO("Error parsing topic ~p.", [NamespaceTopicIn]), nok
-  end.
 
 %TODO: make ping work with non load-balanced server
 handle_message(#internal_msg{
   payload = #rpc_msg{request_id = RId, request_payload = #ping{}},
   meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
-}, State) ->
+}, #channel_state{marshaller = Func} = State) ->
   erlzmq:send(Socket, Id, [sndmore]),
   erlzmq:send(Socket, <<>>, [sndmore]),
-  %TODO: send header and then message.
-  %TODO: Make marshalling optional.
-  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}})),
+  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}}, Func)),
   {ok, State};
 
 handle_message(
@@ -293,7 +291,6 @@ handle_message(
   Res = cast_handler(Handler, Payload),
   {Res, State#channel_state{pending = Pending#{RId => {Socket, Id, RId}}}};
 
-
 handle_message(
     #internal_msg{
       payload = #rpc_msg{request_id = _RId, request_payload = undefined} = Payload
@@ -307,8 +304,8 @@ handle_message(Msg, State) -> {{error, {message_not_supported, Msg}}, State}.
 cast_handler(Handler, Payload) ->
   gen_server:cast(Handler, Payload).
 
-%TODO: close context
 terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint} = State) ->
+  %% ZeroMQ Context isn't closed by terminate. Must be explicitly called.
   case Subs of
     undefined -> ok;
     _ -> lists:foreach(fun(Pi) -> erlzmq:close(Pi) end, Subs)
@@ -326,18 +323,13 @@ terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint}
     _ -> erlzmq:close(Endpoint)
   end.
 
-%erlzmq:term(C).
-
-unmarshal({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
+process_message({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
   {buffer, M};
-unmarshal({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
+process_message({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
   {buffer, M};
-unmarshal({zmq, Socket, Msg, Flags} = M, _State) ->
-  {deliver, #internal_msg{payload = binary_to_term(Msg), meta = #{socket => Socket, flags => Flags}}, M};
-unmarshal(_, _) -> {error, bad_request}.
-
-marshal(Msg) ->
-  term_to_binary(Msg).
+process_message({zmq, Socket, Msg, Flags} = M, #channel_state{unmarshaller = Func}) ->
+  {deliver, #internal_msg{payload = unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
+process_message(_, _) -> {error, bad_request}.
 
 -spec is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
 is_alive(pub_sub, #{address := Address}) ->
@@ -381,6 +373,14 @@ is_alive(rpc, #{address := {Host, Port}}) ->
 %%%===================================================================
 %%% Private Functions
 %%%===================================================================
+
+get_context() ->
+  case whereis(zmq_context) of
+    undefined ->
+      zmq_context:start_link();
+    _ -> ok
+  end,
+  zmq_context:get().
 
 connect_to_publishers(Pubs, Namespace, Topics, Context) ->
   lists:foldl(fun(Address, AddressList) ->
@@ -432,3 +432,56 @@ trigger_event(Event, Attributes, #channel_state{async = true, handler = Handler}
   end;
 
 trigger_event(_Event, _Attributes, #channel_state{}) -> ok.
+
+is_subscribed(NamespaceTopicIn, Namespace, Topics) ->
+  case get_topic_term(NamespaceTopicIn, Namespace) of
+    {ok, Topic} ->
+      case lists:member(Topic, Topics) of
+        true -> ok;
+        false when Topics == [] -> ok;
+        false -> nok
+      end;
+    _ -> ?LOG_INFO("Error parsing topic ~p.", [NamespaceTopicIn]), nok
+  end.
+
+
+marshal(Msg, EncodeFun) ->
+  {Header, Content} = get_header_and_content(Msg),
+  HeaderBin = erlang:term_to_binary(Header),
+  HeaderLen = byte_size(HeaderBin),
+  LenBin = binary:encode_unsigned(HeaderLen),
+  LenPad = <<0:(8 * (?HEADER_LENGTH_BYTES - byte_size(LenBin))), LenBin/binary>>,
+  <<LenPad/binary, HeaderBin/binary, (EncodeFun(Content))/binary>>.
+
+unmarshal(Frame, DecodeFun) ->
+  <<LenAgain:?HEADER_LENGTH_BYTES/binary, Rest/binary>> = Frame,
+  LenInt = binary:decode_unsigned(LenAgain),
+  <<Header:LenInt/binary, Bin/binary>> = Rest,
+  Res = get_header_and_content_back(erlang:binary_to_term(Header), DecodeFun(Bin)),
+  Res.
+
+get_header_and_content(#rpc_msg{request_payload = P, reply_payload = undefined} = R) ->
+  {R#rpc_msg{request_payload = content}, P};
+get_header_and_content(#rpc_msg{request_payload = undefined, reply_payload = P} = R) ->
+  {R#rpc_msg{reply_payload = content}, P};
+get_header_and_content(#pub_sub_msg{payload = P} = R) ->
+  {R#pub_sub_msg{payload = content}, P}.
+
+get_header_and_content_back(#rpc_msg{request_payload = content, reply_payload = undefined} = R, Payload) ->
+  R#rpc_msg{request_payload = Payload};
+get_header_and_content_back(#rpc_msg{request_payload = undefined, reply_payload = content} = R, Payload) ->
+  R#rpc_msg{reply_payload = Payload};
+get_header_and_content_back(#pub_sub_msg{payload = content} = R, Payload) ->
+  R#pub_sub_msg{payload = Payload}.
+
+
+%===========================================================
+% EUNIT Tests
+%===========================================================
+
+marshal_test() ->
+  Header = #rpc_msg{request_id = make_ref(), request_payload = <<0, 128, 256>>},
+  Serialized = marshal(Header, fun encoders:dummy/1),
+  Deserialized = unmarshal(Serialized, fun decoders:dummy/1),
+  ?assertEqual(Header, Deserialized).
+
