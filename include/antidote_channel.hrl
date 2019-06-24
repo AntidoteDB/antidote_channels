@@ -59,12 +59,6 @@
   network_params :: term()
 }).
 
--record(pub_channel_config, {
-  namespace = <<"default">> :: binary(),
-  network_params :: term()
-  %% TODO: rpc = false :: boolean() % Use true to force process to wait for a response
-}).
-
 -record(rpc_channel_zmq_params, {
   remote_host :: inet:ip_address() | undefined,
   remote_port :: inet:port_number()| undefined,
@@ -84,7 +78,7 @@
   username = <<"guest">>,
   password = <<"guest">>,
   virtual_host = <<"/">>,
-  host = "localhost",
+  host = {127, 0, 0, 1},
   port = undefined,
   channel_max = 2047,
   frame_max = 0,

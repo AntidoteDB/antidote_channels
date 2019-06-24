@@ -9,14 +9,16 @@
 ]).
 
 -export([
+  test_socket/1,
   basic_rpc_test/1
 ]).
 
 all() -> [
+  test_socket,
   basic_rpc_test
 ].
 
--define(PORT, 7866).
+-define(PORT, 5672).
 -define(PUB_SUB, #{
   module => channel_zeromq,
   pattern => pub_sub,
@@ -46,6 +48,9 @@ end_per_testcase(basic_rpc_test, _Config) -> ok;
 end_per_testcase(rpc_wait_test, Config) -> Config;
 
 end_per_testcase(bin_rpc_test, Config) -> Config.
+
+test_socket(_Config) ->
+  true = antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = {127, 0, 0, 1}, port = ?PORT}).
 
 basic_rpc_test(_Config) ->
 

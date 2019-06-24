@@ -30,7 +30,7 @@
 
 %%TODO: Avoid starting multiple connections
 %% API
--export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
+-export([start_link/1, is_alive/1, get_network_config/2, stop/1]).
 -export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, process_message/2, get_network_config/1, terminate/2]).
 
 -define(DEFAULT_EXCHANGE, <<"antidote_exchange">>).
@@ -292,10 +292,13 @@ process_message(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
 process_message(_, _) -> {error, bad_request}.
 
 
--spec is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
-is_alive(_Pattern, _Address) ->
-  %TODO
-  false.
+-spec is_alive(NetworkParams :: term()) -> true | false.
+is_alive(#rabbitmq_network{} = NetworkParams) ->
+  Res = get_connection(NetworkParams),
+  case Res of
+    {ok, _} -> true;
+    _ -> false
+  end.
 
 %%%===================================================================
 %%% Private Functions
@@ -375,7 +378,7 @@ get_amqp_params(#rabbitmq_network{
   connection_timeout = CT, ssl_options = S, auth_mechanisms = A, client_properties = CP, socket_options = SO
 }) ->
   #amqp_params_network{
-    password = Pa, virtual_host = V, host = H, port = Po, channel_max = C, frame_max = F, heartbeat = Hb,
+    password = Pa, virtual_host = V, host = inet_parse:ntoa(H), port = Po, channel_max = C, frame_max = F, heartbeat = Hb,
     connection_timeout = CT, ssl_options = S, auth_mechanisms = A, client_properties = CP, socket_options = SO
   }.
 

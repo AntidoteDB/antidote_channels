@@ -30,7 +30,7 @@
 -include_lib("antidote_channel.hrl").
 
 %% API
--export([start_link/1, send/2, send/3, reply/3, subscribe/2, is_alive/3, get_config/1, stop/1]).
+-export([start_link/1, send/2, send/3, reply/3, subscribe/2, is_alive/2, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -66,7 +66,7 @@
 -callback process_message(Info :: message_payload(), State :: channel_state()) -> {
   event(), message_payload()} | {event(), internal_msg(), message_payload()} | {error, Reason :: atom()}.
 
--callback is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
+-callback is_alive(NetworkParams :: term()) -> true | false.
 
 -callback reply(RequestId :: reference(), Reply :: any(), State :: channel_state()) -> any().
 
@@ -105,10 +105,10 @@ reply(Pid, RequestId, Msg) ->
 subscribe(Pid, Topics) ->
   gen_server:cast(Pid, {add_subscriptions, Topics}).
 
--spec is_alive(ChannelType :: channel_type(), Pattern :: atom(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
+-spec is_alive(ChannelType :: channel_type(), NetworkParams :: term()) -> true | false.
 
-is_alive(ChannelType, Pattern, Address) ->
-  ChannelType:is_alive(Pattern, Address).
+is_alive(ChannelType, NetworkParams) ->
+  ChannelType:is_alive(NetworkParams).
 
 -spec stop(Pid :: pid()) -> ok.
 

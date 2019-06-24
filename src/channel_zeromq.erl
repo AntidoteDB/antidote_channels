@@ -27,8 +27,8 @@
 }).
 
 %% API
--export([start_link/1, is_alive/2, get_network_config/2, stop/1]).
--export([init_channel/1, subscribe/2, send/3, reply/3, handle_message/2, process_message/2, terminate/2]).
+-export([start_link/1, get_network_config/2, stop/1]).
+-export([init_channel/1, is_alive/1, subscribe/2, send/3, reply/3, handle_message/2, process_message/2, terminate/2]).
 
 -define(ZMQ_TIMEOUT, 5000).
 -define(PING_TIMEOUT, 2000).
@@ -51,11 +51,6 @@
 
 start_link(Config) ->
   antidote_channel:start_link(Config#{module => channel_zeromq}).
-
-%-spec is_alive(ChannelType :: channel_type(), Address :: {inet:ip_address(), inet:port_number()}) -> true | false.
-
-%is_alive(zeromq_channel, Address) ->
-%  is_alive(Address).
 
 -spec stop(Pid :: pid()) -> ok.
 
@@ -109,7 +104,7 @@ init_channel(#pub_sub_channel_config{
     marshalling = Marshalling
   }
 } = Config
-) when Host =/= undefined, Port =/= undefined ->
+) ->
   Context = get_context(),
 
   Res =
@@ -324,25 +319,30 @@ process_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, 
   {deliver, #internal_msg{payload = unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
 process_message(_, _) -> {error, bad_request}.
 
--spec is_alive(Pattern :: atom(), Attributes :: #{address => {inet:ip_address(), inet:port_number()}}) -> true | false.
-is_alive(pub_sub, #{address := Address}) ->
+-spec is_alive(NetworkParams :: term()) -> true | false.
+is_alive(#pub_sub_zmq_params{
+  host = Host,
+  port = Port
+}) ->
   Context = get_context(),
   {ok, Socket} = erlzmq:socket(Context, [sub, {active, false}]),
-  ok = erlzmq:connect(Socket, connection_string(Address)),
+  ok = erlzmq:connect(Socket, connection_string({Host, Port})),
   ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
   ok = erlzmq:setsockopt(Socket, subscribe, <<>>),
   Res = erlzmq:recv(Socket),
   erlzmq:close(Socket),
   case Res of
-    {ok, Msg} -> {true, Msg};
+    {ok, _Msg} -> true;
     _ -> false
   end;
 
-is_alive(rpc, #{address := {Host, Port}}) ->
+is_alive(#rpc_channel_zmq_params{
+  host = Host,
+  port = Port
+}) ->
   Config = #{
     module => channel_zeromq,
     pattern => rpc,
-    %TODO: when sync is available make blocking call on send
     async => true,
     handler => self(),
     network_params => #{
