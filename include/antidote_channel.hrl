@@ -80,7 +80,8 @@
   marshalling = {fun encoders:binary/1, fun decoders:binary/1}
 }).
 
--record(rabbitmq_network, {username = <<"guest">>,
+-record(rabbitmq_network, {
+  username = <<"guest">>,
   password = <<"guest">>,
   virtual_host = <<"/">>,
   host = "localhost",

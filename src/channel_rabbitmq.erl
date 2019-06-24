@@ -277,13 +277,13 @@ cast_handler(Handler, Payload) ->
   gen_server:cast(Handler, Payload).
 
 
-terminate(Reason, #channel_state{connection = Connection, channel = Channel, subscriber_tags = Ts} = State) ->
+terminate(Reason, #channel_state{channel = Channel, subscriber_tags = Ts} = State) ->
   lists:foreach(fun(T) ->
     amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T})
                 end, Ts),
   trigger_event(chan_closed, #{reason => Reason}, State),
-  amqp_channel:close(Channel),
-  amqp_connection:close(Connection).
+  amqp_channel:close(Channel).
+%amqp_connection:close(Connection).
 
 
 process_message({#'basic.deliver'{} = Meta, #'amqp_msg'{payload = Msg, props = Props}} = M, #channel_state{marshalling = {_, Func}} = _State) ->
@@ -336,16 +336,6 @@ create_queue(Channel, Name, Exclusive, PrefetchCount) ->
     #'amqp_error'{} = Error -> {error, Error}
   end.
 
-get_amqp_params(#rabbitmq_network{
-  password = Pa, virtual_host = V, host = H, port = Po, channel_max = C, frame_max = F, heartbeat = Hb,
-  connection_timeout = CT, ssl_options = S, auth_mechanisms = A, client_properties = CP, socket_options = SO
-}) ->
-  #amqp_params_network{
-    password = Pa, virtual_host = V, host = H, port = Po, channel_max = C, frame_max = F, heartbeat = Hb,
-    connection_timeout = CT, ssl_options = S, auth_mechanisms = A, client_properties = CP, socket_options = SO
-  }.
-
-
 declare_exchange(<<>>, Channel, Type) ->
   declare_exchange(?DEFAULT_EXCHANGE, Channel, Type);
 declare_exchange(ExchangeName, Channel, Type) ->
@@ -358,8 +348,19 @@ subscribe_queue(Channel, Queue, Subscriber, AutoAck) ->
   #'basic.consume_ok'{consumer_tag = Tag} = amqp_channel:subscribe(Channel, Sub, Subscriber),
   {ok, Tag}.
 
+init_or_get_connection_mgr() ->
+  case whereis(rabbitmq_connection_mgr) of
+    undefined ->
+      {ok, Pid} = rabbitmq_connection_mgr:start_link(), Pid;
+    Pid -> Pid
+  end.
+
+get_connection(NetworkParams) ->
+  Pid = init_or_get_connection_mgr(),
+  gen_server:call(Pid, {get_connection, get_amqp_params(NetworkParams)}).
+
 get_channel(NetworkParams) ->
-  case amqp_connection:start(get_amqp_params(NetworkParams)) of
+  case get_connection(NetworkParams) of
     {ok, Con} ->
       CRes = amqp_connection:open_channel(Con),
       case CRes of
@@ -368,6 +369,15 @@ get_channel(NetworkParams) ->
       end;
     ErrorCon -> ErrorCon
   end.
+
+get_amqp_params(#rabbitmq_network{
+  password = Pa, virtual_host = V, host = H, port = Po, channel_max = C, frame_max = F, heartbeat = Hb,
+  connection_timeout = CT, ssl_options = S, auth_mechanisms = A, client_properties = CP, socket_options = SO
+}) ->
+  #amqp_params_network{
+    password = Pa, virtual_host = V, host = H, port = Po, channel_max = C, frame_max = F, heartbeat = Hb,
+    connection_timeout = CT, ssl_options = S, auth_mechanisms = A, client_properties = CP, socket_options = SO
+  }.
 
 trigger_event(Event, Attributes, #channel_state{async = true, handler = Handler}) ->
   case Handler of
