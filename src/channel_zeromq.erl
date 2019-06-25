@@ -32,7 +32,6 @@
 
 -define(ZMQ_TIMEOUT, 5000).
 -define(PING_TIMEOUT, 2000).
--define(HEADER_LENGTH_BYTES, 4).
 -define(LOG_INFO(X, Y), logger:info(X, Y)).
 -define(LOG_INFO(X), logger:info(X)).
 
@@ -223,11 +222,11 @@ subscribe(Topics, #channel_state{subs = Subs, namespace = Namespace} = State) ->
 send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{endpoint = Endpoint, namespace = Namespace, marshalling = {Func, _}} = State) ->
   TopicBinary = get_topic_with_namespace(Namespace, Topic),
   ok = erlzmq:send(Endpoint, TopicBinary, [sndmore]),
-  ok = erlzmq:send(Endpoint, marshal(Msg, Func)),
+  ok = erlzmq:send(Endpoint, antidote_channel_utils:marshal(Msg, Func)),
   {ok, State};
 
 send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint, marshalling = {Func, _}} = State) ->
-  ok = erlzmq:send(Endpoint, marshal(Msg, Func)),
+  ok = erlzmq:send(Endpoint, antidote_channel_utils:marshal(Msg, Func)),
   {ok, State}.
 
 reply(RId, Reply, #channel_state{pending = Pending, marshalling = {Func, _}} = State) ->
@@ -235,7 +234,7 @@ reply(RId, Reply, #channel_state{pending = Pending, marshalling = {Func, _}} = S
           {ok, {Socket, Id, _}} ->
             erlzmq:send(Socket, Id, [sndmore]),
             erlzmq:send(Socket, <<>>, [sndmore]),
-            erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = Reply}, Func));
+            erlzmq:send(Socket, antidote_channel_utils:marshal(#rpc_msg{request_id = RId, reply_payload = Reply}, Func));
           R -> R
         end,
   {Res, State#channel_state{pending = maps:remove(RId, Pending)}}.
@@ -247,7 +246,7 @@ handle_message(#internal_msg{
 }, #channel_state{marshalling = {Func, _}} = State) ->
   erlzmq:send(Socket, Id, [sndmore]),
   erlzmq:send(Socket, <<>>, [sndmore]),
-  erlzmq:send(Socket, marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}}, Func)),
+  erlzmq:send(Socket, antidote_channel_utils:marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}}, Func)),
   {ok, State};
 
 handle_message(
@@ -316,7 +315,7 @@ process_message({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
 process_message({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
   {buffer, M};
 process_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, Func}}) ->
-  {deliver, #internal_msg{payload = unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
+  {deliver, #internal_msg{payload = antidote_channel_utils:unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
 process_message(_, _) -> {error, bad_request}.
 
 -spec is_alive(NetworkParams :: term()) -> true | false.
@@ -437,44 +436,13 @@ is_subscribed(NamespaceTopicIn, Namespace, Topics) ->
     _ -> ?LOG_INFO("Error parsing topic ~p.", [NamespaceTopicIn]), nok
   end.
 
-
-marshal(Msg, EncodeFun) ->
-  {Header, Content} = get_header_and_content(Msg),
-  HeaderBin = erlang:term_to_binary(Header),
-  HeaderLen = byte_size(HeaderBin),
-  LenBin = binary:encode_unsigned(HeaderLen),
-  LenPad = <<0:(8 * (?HEADER_LENGTH_BYTES - byte_size(LenBin))), LenBin/binary>>,
-  <<LenPad/binary, HeaderBin/binary, (EncodeFun(Content))/binary>>.
-
-unmarshal(Frame, DecodeFun) ->
-  <<LenAgain:?HEADER_LENGTH_BYTES/binary, Rest/binary>> = Frame,
-  LenInt = binary:decode_unsigned(LenAgain),
-  <<Header:LenInt/binary, Bin/binary>> = Rest,
-  Res = get_header_and_content_back(erlang:binary_to_term(Header), DecodeFun(Bin)),
-  Res.
-
-get_header_and_content(#rpc_msg{request_payload = P, reply_payload = undefined} = R) ->
-  {R#rpc_msg{request_payload = content}, P};
-get_header_and_content(#rpc_msg{request_payload = undefined, reply_payload = P} = R) ->
-  {R#rpc_msg{reply_payload = content}, P};
-get_header_and_content(#pub_sub_msg{payload = P} = R) ->
-  {R#pub_sub_msg{payload = content}, P}.
-
-get_header_and_content_back(#rpc_msg{request_payload = content, reply_payload = undefined} = R, Payload) ->
-  R#rpc_msg{request_payload = Payload};
-get_header_and_content_back(#rpc_msg{request_payload = undefined, reply_payload = content} = R, Payload) ->
-  R#rpc_msg{reply_payload = Payload};
-get_header_and_content_back(#pub_sub_msg{payload = content} = R, Payload) ->
-  R#pub_sub_msg{payload = Payload}.
-
-
 %===========================================================
 % EUNIT Tests
 %===========================================================
 
 marshal_test() ->
   Header = #rpc_msg{request_id = make_ref(), request_payload = <<0, 128, 256>>},
-  Serialized = marshal(Header, fun encoders:dummy/1),
-  Deserialized = unmarshal(Serialized, fun decoders:dummy/1),
+  Serialized = antidote_channel_utils:marshal(Header, fun encoders:dummy/1),
+  Deserialized = antidote_channel_utils:unmarshal(Serialized, fun decoders:dummy/1),
   ?assertEqual(Header, Deserialized).
 

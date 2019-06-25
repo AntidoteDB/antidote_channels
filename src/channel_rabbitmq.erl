@@ -92,8 +92,8 @@ get_network_config(ConfigMap) ->
 
 % Routing with no topic is not supported.
 % It might conflict with existing namespaces.
-init_channel(#pub_sub_channel_config{topics = [], namespace = <<>>}) ->
-  {error, not_supported};
+%init_channel(#pub_sub_channel_config{topics = [], namespace = <<>>}) ->
+%  {error, not_supported};
 
 init_channel(#pub_sub_channel_config{
   handler = Handler,
@@ -221,19 +221,27 @@ init_channel(#rpc_channel_config{
 init_channel(_Config) ->
   {error, bad_configuration}.
 
-subscribe(_Topics, #channel_state{} = _State) -> {error, not_implemented}.
+subscribe(Topics, #channel_state{channel = Channel, subscriber_tags = Tags} = State) ->
+  TagsF = lists:foldl(
+    fun(Topic, TagsAcc) ->
+      {ok, Tag} = subscribe_queue(Channel, Topic, self(), false),
+      [Tag | TagsAcc]
+    end, Tags, Topics),
+  {ok, State#channel_state{subscriber_tags = TagsF}}.
+
+%TODO unsubscribe
 
 send(#pub_sub_msg{topic = Topic} = Msg, _Params, #channel_state{channel = Channel, exchange = Exchange, marshalling = {Func, _}} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = Topic},
-  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Func(Msg)}),
+  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = antidote_channel_utils:marshal(Msg, Func)}),
   {ok, State};
 
 send(#rpc_msg{} = Msg, _Params, #channel_state{channel = Channel, exchange = Exchange, rpc_queue_name = QueueName, reply_to = ReplyName, marshalling = {Func, _}} = State) ->
   Publish = #'basic.publish'{exchange = Exchange, routing_key = QueueName},
-  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Func(Msg), props = #'P_basic'{reply_to = ReplyName, correlation_id = random_correlation_id()}}),
+  amqp_channel:cast(Channel, Publish, #amqp_msg{payload = antidote_channel_utils:marshal(Msg, Func), props = #'P_basic'{reply_to = ReplyName, correlation_id = random_correlation_id()}}),
   {ok, State};
 
-send(_Msg, _Params, State) -> {ok, State}.
+send(Msg, _Params, State) -> {{error, {message_not_supported, Msg}}, State}.
 
 reply(RId, Reply, #channel_state{channel =
 Channel, pending = Pending, marshalling = {Func, _}, exchange = Exchange} = State) ->
@@ -241,7 +249,7 @@ Channel, pending = Pending, marshalling = {Func, _}, exchange = Exchange} = Stat
           {ok, #{props := #'P_basic'{correlation_id = CId, reply_to = RoutingKey}}} ->
             Msg = #rpc_msg{request_id = RId, reply_payload = Reply},
             Publish = #'basic.publish'{exchange = Exchange, routing_key = RoutingKey},
-            amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Func(Msg), props = #'P_basic'{correlation_id = CId}});
+            amqp_channel:cast(Channel, Publish, #amqp_msg{payload = antidote_channel_utils:marshal(Msg, Func), props = #'P_basic'{correlation_id = CId}});
           R -> R
         end,
   {Res, State#channel_state{pending = maps:remove(RId, Pending)}}.
@@ -287,7 +295,7 @@ terminate(Reason, #channel_state{channel = Channel, subscriber_tags = Ts} = Stat
 
 
 process_message({#'basic.deliver'{} = Meta, #'amqp_msg'{payload = Msg, props = Props}} = M, #channel_state{marshalling = {_, Func}} = _State) ->
-  {deliver, #internal_msg{payload = Func(Msg), meta = #{meta => Meta, props => Props}}, M};
+  {deliver, #internal_msg{payload = antidote_channel_utils:unmarshal(Msg, Func), meta = #{meta => Meta, props => Props}}, M};
 process_message(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
 process_message(_, _) -> {error, bad_request}.
 

@@ -37,6 +37,8 @@ all() -> [
 -define(RABBITMQ_PARAMS, #{port => ?RABBITMQ_PORT}).
 -define(ZEROMQ_PARAMS, #{port => ?ZEROMQ_PORT, publishersAddresses => [{{127, 0, 0, 1}, ?ZEROMQ_PORT}]}).
 
+%TODO: Add subscription during execution test
+
 init_per_testcase(init_close_test, Config) -> Config;
 
 init_per_testcase(send_receive_test, Config) ->
