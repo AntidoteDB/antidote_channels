@@ -339,7 +339,7 @@ direct_routing_declare(Channel, ExchangeName, RoutingKeys, #'queue.declare'{} = 
   {ok, Queues}.
 
 create_queue(Channel, Name, Exclusive, PrefetchCount) ->
-  Queue = #'queue.declare'{queue = Name, exclusive = Exclusive},
+  Queue = #'queue.declare'{queue = Name, exclusive = Exclusive, auto_delete = true},
   case amqp_channel:call(Channel, Queue) of
     #'queue.declare_ok'{queue = Name1} ->
       amqp_channel:call(Channel, #'basic.qos'{prefetch_count = PrefetchCount}),

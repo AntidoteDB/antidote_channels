@@ -318,22 +318,22 @@ process_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, 
   {deliver, #internal_msg{payload = antidote_channel_utils:unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
 process_message(_, _) -> {error, bad_request}.
 
+%pub_sub is always true.
 -spec is_alive(NetworkParams :: term()) -> true | false.
-is_alive(#pub_sub_zmq_params{
-  host = Host,
-  port = Port
-}) ->
-  Context = get_context(),
-  {ok, Socket} = erlzmq:socket(Context, [sub, {active, false}]),
-  ok = erlzmq:connect(Socket, connection_string({Host, Port})),
-  ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
-  ok = erlzmq:setsockopt(Socket, subscribe, <<>>),
-  Res = erlzmq:recv(Socket),
-  erlzmq:close(Socket),
-  case Res of
-    {ok, _Msg} -> true;
-    _ -> false
-  end;
+is_alive(#pub_sub_zmq_params{host = _Host, port = _Port}) ->
+  %Context = get_context(),
+  %{ok, Socket} = erlzmq:socket(Context, [sub, {active, false}]),
+  %ok = erlzmq:connect(Socket, connection_string({Host, Port})),
+  %ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
+  %ok = erlzmq:setsockopt(Socket, subscribe, <<>>),
+  %erlzmq:recv(Socket),
+  %erlzmq:close(Socket),
+  %case Res of
+  %  {ok, _Msg} -> true;
+  %  {ok, _Msg} -> true;
+  %  _ -> false
+  %end;
+  true;
 
 is_alive(#rpc_channel_zmq_params{
   host = Host,
