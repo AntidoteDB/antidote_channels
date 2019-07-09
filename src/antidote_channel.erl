@@ -30,7 +30,7 @@
 -include_lib("antidote_channel.hrl").
 
 %% API
--export([start_link/1, send/2, send/3, reply/3, subscribe/2, is_alive/2, get_config/1, stop/1]).
+-export([start_link/1, send/2, send/3, reply/3, is_alive/2, get_config/1, stop/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -51,29 +51,52 @@
 %%% Callback declarations
 %%%===================================================================
 
+%% @doc init_channel:
+%% Initializes a new channel.
+%% Config parameters allow to specify different communication patterns.
 -callback init_channel(Config :: channel_config()) ->
   {ok, State :: channel_state()} | {error, Reason :: term()}.
 
+%% Sends a message using the configured channel.
+%% Msg: pub_sub_msg or rpc_msg
+%% Params: additional parameter for the request. See each module for details.
+%%  wait: can be used to wait on a single rpc message
 -callback send(Msg :: message(), Params :: map(), State :: channel_state()) ->
   {ok, State :: channel_state()}.
 
--callback subscribe(Topics :: [binary()], State :: channel_state()) ->
-  {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
+%% Decide what to do with a message received from the underlying channel.
+%% Allows buffering, ignoring, or delivery of a message.
+%% Buffered messages are stored until the next message to deliver arrives.
+-callback deliver_message(Info :: message_payload(), State :: channel_state()) -> {
+  event(), message_payload()} | {event(), internal_msg(), message_payload()} | {error, Reason :: atom()}.
+
+%% Delivers an incoming message to the subscribing handler.
 -callback handle_message(Msg :: internal_msg(), State :: channel_state()) ->
   {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
--callback process_message(Info :: message_payload(), State :: channel_state()) -> {
-  event(), message_payload()} | {event(), internal_msg(), message_payload()} | {error, Reason :: atom()}.
 
+%% Utility to check if a remote point is live.
 -callback is_alive(NetworkParams :: term()) -> true | false.
 
+%% Called by handler to reply to a rpc request.
 -callback reply(RequestId :: reference(), Reply :: any(), State :: channel_state()) -> any().
+
+%-callback subscribe(Topics :: [binary()], State :: channel_state()) ->
+%  {ok, NewState :: channel_state()} | {error, Reason :: atom()}.
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
+%% Config map accepts the following parameters
+%%  module: the backend module to be used
+%%  pattern: pub_sub or rpc
+%%  async: [for rpc] blocking or asynchronous send
+%%  load_balanced: when supported allows load balancing of subscribers/clients
+%%  network_params: specific configurations for the chosen module (antidote_channel.hrl)
+%%  namespace: [for pub_sub] namespace for messages
+%%  topics: [for pub_sub] list of topics for subscriber
 -spec start_link(Config :: map()) ->
   {ok, Pid :: pid()} |
   ignore |
@@ -100,10 +123,10 @@ send(Pid, Msg, Params) ->
 reply(Pid, RequestId, Msg) ->
   gen_server:call(Pid, {reply, RequestId, Msg}).
 
--spec subscribe(Pid :: pid(), Topics :: [binary()]) -> ok.
+%-spec subscribe(Pid :: pid(), Topics :: [binary()]) -> ok.
 
-subscribe(Pid, Topics) ->
-  gen_server:cast(Pid, {add_subscriptions, Topics}).
+%subscribe(Pid, Topics) ->
+%  gen_server:cast(Pid, {add_subscriptions, Topics}).
 
 -spec is_alive(ChannelType :: channel_type(), NetworkParams :: term()) -> true | false.
 
@@ -210,7 +233,7 @@ handle_cast(Info, State) ->
   {stop, Reason :: term(), NewState :: state()}.
 
 handle_info(Info, #state{module = Mod, channel_state = S, buffer = Buff} = State) ->
-  case Mod:process_message(Info, S) of
+  case Mod:deliver_message(Info, S) of
     {do_nothing, _} -> {noreply, State};
     {buffer, M} -> {noreply, State#state{buffer = [M | Buff]}};
     {deliver, #internal_msg{meta = Meta} = Msg, Original} ->
@@ -231,8 +254,8 @@ handle_info(Info, State) ->
 
 handle_message(
     Msg = #internal_msg{
-      payload = #rpc_msg{request_id = RId, request_payload = undefined, reply_payload = P}},
-    #state{module = Mod, channel_state = S, pending = Pending} = State) ->
+      payload = #rpc_msg{request_id = RId, reply_payload = P}},
+    #state{module = Mod, channel_state = S, pending = Pending} = State) when P =/= undefined ->
   case maps:find(RId, Pending) of
     {ok, To} -> gen_server:reply(To, P), {ok, State#state{pending = maps:remove(RId, Pending)}};
     _ -> {R, Si} = Mod:handle_message(Msg, S), {R, State#state{channel_state = Si}}

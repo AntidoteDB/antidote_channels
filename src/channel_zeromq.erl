@@ -28,7 +28,7 @@
 
 %% API
 -export([start_link/1, get_network_config/2, stop/1]).
--export([init_channel/1, is_alive/1, subscribe/2, send/3, reply/3, handle_message/2, process_message/2, terminate/2]).
+-export([init_channel/1, is_alive/1, subscribe/2, send/3, reply/3, handle_message/2, deliver_message/2, terminate/2]).
 
 -define(ZMQ_TIMEOUT, 5000).
 -define(PING_TIMEOUT, 2000).
@@ -265,7 +265,7 @@ handle_message(
     #channel_state{handler = S, namespace = Namespace, topics = Topics} = State) ->
 
   case is_subscribed(NamespaceTopic, Namespace, Topics) of
-    ok -> {cast_handler(S, Payload), State};
+    ok -> emit_event(S, Payload), {ok, State};
     nok -> {{error, topic_not_subscribed}, State}
   end;
 
@@ -275,21 +275,21 @@ handle_message(
       meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
     },
     #channel_state{handler = Handler, pending = Pending} = State) ->
-  Res = cast_handler(Handler, Payload),
-  {Res, State#channel_state{pending = Pending#{RId => {Socket, Id, RId}}}};
+  emit_event(Handler, Payload),
+  {ok, State#channel_state{pending = Pending#{RId => {Socket, Id, RId}}}};
 
 handle_message(
     #internal_msg{
       payload = #rpc_msg{request_id = _RId, request_payload = undefined} = Payload
     },
     #channel_state{handler = Handler} = State) ->
-  Res = cast_handler(Handler, Payload),
-  {Res, State};
+  emit_event(Handler, Payload),
+  {ok, State};
 
 handle_message(Msg, State) -> {{error, {message_not_supported, Msg}}, State}.
 
-cast_handler(Handler, Payload) ->
-  gen_server:cast(Handler, Payload).
+emit_event(Handler, Payload) ->
+  Handler ! Payload.
 
 terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint} = State) ->
   %% ZeroMQ Context isn't closed by terminate. Must be explicitly called.
@@ -310,13 +310,13 @@ terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint}
     _ -> erlzmq:close(Endpoint)
   end.
 
-process_message({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
+deliver_message({zmq, _Socket, <<>>, [rcvmore]} = M, _State) ->
   {buffer, M};
-process_message({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
+deliver_message({zmq, _Socket, _IdOrNamespaceTopic, [rcvmore]} = M, _State) ->
   {buffer, M};
-process_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, Func}}) ->
+deliver_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, Func}}) ->
   {deliver, #internal_msg{payload = antidote_channel_utils:unmarshal(Msg, Func), meta = #{socket => Socket, flags => Flags}}, M};
-process_message(_, _) -> {error, bad_request}.
+deliver_message(_, _) -> {error, bad_request}.
 
 %pub_sub is always true.
 -spec is_alive(NetworkParams :: term()) -> true | false.
@@ -420,7 +420,7 @@ get_topic_term(NamespaceTopic, Namespace) ->
 trigger_event(Event, Attributes, #channel_state{async = true, handler = Handler}) ->
   case Handler of
     undefined -> ok;
-    _ -> gen_server:cast(Handler, {Event, Attributes})
+    _ -> Handler ! {Event, Attributes}
   end;
 
 trigger_event(_Event, _Attributes, #channel_state{}) -> ok.

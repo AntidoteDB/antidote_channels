@@ -59,6 +59,10 @@
   network_params :: term()
 }).
 
+%% set host and port for server
+%% set remote_host and remote_port for client
+%% marshalling encoder and decoder are used to encode payload.
+%% Set dummy marshaller to handle message marshalling on the application.
 -record(rpc_channel_zmq_params, {
   remote_host :: inet:ip_address() | undefined,
   remote_port :: inet:port_number()| undefined,
@@ -67,6 +71,9 @@
   marshalling = {fun encoders:binary/1, fun decoders:binary/1}
 }).
 
+%% set host and port to configure a publisher
+%% ZeroMQ doesn't have a centralized broken. It is necessary to connect to each publisher.
+%% Use publisherAddresses to connect to multiple publishers.
 -record(pub_sub_zmq_params, {
   host = {0, 0, 0, 0} :: inet:ip_address(),
   port :: inet:port_number() | undefined,
@@ -74,6 +81,8 @@
   marshalling = {fun encoders:binary/1, fun decoders:binary/1}
 }).
 
+
+%% RabbitMQ broker configuration.
 -record(rabbitmq_network, {
   username = <<"guest">>,
   password = <<"guest">>,

@@ -42,19 +42,15 @@ handle_call(Msg, _From, #state{} = State) ->
 %handle_cast({chan_closed, #{reason := Reason}}, #state{} = State) ->
 %  {stop, Reason, State};
 
-handle_cast(#rpc_msg{reply_payload = Msg}, #state{msg_buffer = Buff} = State) ->
+handle_info(#rpc_msg{reply_payload = Msg}, #state{msg_buffer = Buff} = State) ->
   Buff1 = [Msg | Buff],
   {noreply, State#state{msg_buffer = Buff1}};
 
-handle_cast(#pub_sub_msg{payload = Msg}, #state{msg_buffer = Buff} = State) ->
+handle_info(#pub_sub_msg{payload = Msg}, #state{msg_buffer = Buff} = State) ->
   Buff1 = [Msg | Buff],
   {noreply, State#state{msg_buffer = Buff1}};
 
-handle_cast(_Msg, State) ->
+handle_info(_Msg, State) ->
   {noreply, State}.
 
-handle_info(Msg, #state{msg_buffer = Buff} = State) ->
-  Buff1 = [Msg | Buff],
-  {noreply, State#state{msg_buffer = Buff1}};
-
-handle_info(_Msg, State) -> {noreply, State}.
+handle_cast(_Msg, State) -> {noreply, State}.

@@ -51,20 +51,20 @@ init([]) -> {ok, #state{}}.
 
 handle_call(_, _, State) -> {stop, ok, State}.
 
-handle_cast({chan_started, #{channel := Channel}}, #state{} = State) ->
+handle_info({chan_started, #{channel := Channel}}, #state{} = State) ->
   {noreply, State#state{channel = Channel}};
 
 %%TODO: document the accepted replies
-handle_cast(#rpc_msg{request_id = RId, request_payload = foo}, #state{channel = Channel} = State) ->
+handle_info(#rpc_msg{request_id = RId, request_payload = foo}, #state{channel = Channel} = State) ->
   antidote_channel:reply(Channel, RId, bar),
   {noreply, State};
 
-handle_cast(#rpc_msg{request_id = RId, request_payload = <<131, 100, 0, 3, 102, 111, 111>>}, #state{channel = Channel} = State) ->
+handle_info(#rpc_msg{request_id = RId, request_payload = <<131, 100, 0, 3, 102, 111, 111>>}, #state{channel = Channel} = State) ->
   antidote_channel:reply(Channel, RId, term_to_binary(bar)),
   {noreply, State};
 
-handle_cast(_Msg, State) ->
+handle_info(_Msg, State) ->
   {noreply, State}.
 
-handle_info(_Msg, State) ->
+handle_cast(_Msg, State) ->
   {noreply, State}.

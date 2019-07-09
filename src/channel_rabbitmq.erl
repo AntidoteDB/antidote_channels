@@ -31,7 +31,7 @@
 %%TODO: Avoid starting multiple connections
 %% API
 -export([start_link/1, is_alive/1, get_network_config/2, stop/1]).
--export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, process_message/2, get_network_config/1, terminate/2]).
+-export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, deliver_message/2, get_network_config/1, terminate/2]).
 
 -define(DEFAULT_EXCHANGE, <<"antidote_exchange">>).
 -define(LOG_INFO(X, Y), logger:info(X, Y)).
@@ -257,20 +257,20 @@ Channel, pending = Pending, marshalling = {Func, _}, exchange = Exchange} = Stat
 handle_message(
     #internal_msg{payload = #pub_sub_msg{} = Payload, meta = #{meta := #'basic.deliver'{delivery_tag = Tag}}},
     #channel_state{channel = Channel, handler = Handler, auto_ack = AutoAck} = State) ->
-  Res = cast_handler(Handler, Payload),
+  emit_event(Handler, Payload),
   if not AutoAck ->
     amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag})
   end,
-  {Res, State};
+  {ok, State};
 
 handle_message(
     #internal_msg{payload = #rpc_msg{request_id = RId, request_payload = R} = Payload, meta = #{meta := #'basic.deliver'{delivery_tag = Tag}} = Meta},
     #channel_state{channel = Channel, handler = Handler, pending = Pending, auto_ack = AutoAck} = State) when R =/= undefined ->
-  Res = cast_handler(Handler, Payload),
+  emit_event(Handler, Payload),
   if not AutoAck ->
     amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag})
   end,
-  {Res, State#channel_state{pending = Pending#{RId => Meta}}};
+  {ok, State#channel_state{pending = Pending#{RId => Meta}}};
 
 %Always auto_ack
 handle_message(
@@ -278,12 +278,11 @@ handle_message(
       payload = #rpc_msg{request_id = _RId, reply_payload = R} = Payload
     },
     #channel_state{handler = Handler} = State) when R =/= undefined ->
-  Res = cast_handler(Handler, Payload),
-  {Res, State}.
+  emit_event(Handler, Payload),
+  {ok, State}.
 
-cast_handler(Handler, Payload) ->
-  gen_server:cast(Handler, Payload).
-
+emit_event(Handler, Payload) ->
+  Handler ! Payload.
 
 terminate(Reason, #channel_state{channel = Channel, subscriber_tags = Ts} = State) ->
   lists:foreach(fun(T) ->
@@ -294,10 +293,10 @@ terminate(Reason, #channel_state{channel = Channel, subscriber_tags = Ts} = Stat
 %amqp_connection:close(Connection).
 
 
-process_message({#'basic.deliver'{} = Meta, #'amqp_msg'{payload = Msg, props = Props}} = M, #channel_state{marshalling = {_, Func}} = _State) ->
+deliver_message({#'basic.deliver'{} = Meta, #'amqp_msg'{payload = Msg, props = Props}} = M, #channel_state{marshalling = {_, Func}} = _State) ->
   {deliver, #internal_msg{payload = antidote_channel_utils:unmarshal(Msg, Func), meta = #{meta => Meta, props => Props}}, M};
-process_message(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
-process_message(_, _) -> {error, bad_request}.
+deliver_message(#'basic.consume_ok'{} = M, _) -> {do_nothing, M};
+deliver_message(_, _) -> {error, bad_request}.
 
 
 -spec is_alive(NetworkParams :: term()) -> true | false.
@@ -393,7 +392,7 @@ get_amqp_params(#rabbitmq_network{
 trigger_event(Event, Attributes, #channel_state{async = true, handler = Handler}) ->
   case Handler of
     undefined -> ok;
-    _ -> gen_server:cast(Handler, {Event, Attributes})
+    _ -> Handler ! {Event, Attributes}
   end;
 
 trigger_event(_Event, _Attributes, #channel_state{}) -> ok.
