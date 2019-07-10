@@ -97,6 +97,7 @@
 %%  network_params: specific configurations for the chosen module (antidote_channel.hrl)
 %%  namespace: [for pub_sub] namespace for messages
 %%  topics: [for pub_sub] list of topics for subscriber
+%%  handler: the process that will receive messages in the mailbox
 -spec start_link(Config :: map()) ->
   {ok, Pid :: pid()} |
   ignore |

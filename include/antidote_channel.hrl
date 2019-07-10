@@ -83,6 +83,8 @@
 
 
 %% RabbitMQ broker configuration.
+%% rpc_queue_name defines the queue name in which the server listens to incoming messages
+%% remote_rpc_queue_name defines the queue a client sends messages to
 -record(rabbitmq_network, {
   username = <<"guest">>,
   password = <<"guest">>,
