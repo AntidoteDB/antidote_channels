@@ -112,12 +112,12 @@ start_link(#{module := Mod} = ConfigMap) ->
 start_link(ConfigMap) ->
   {error, {bad_configuration, ConfigMap}}.
 
--spec send(Pid :: pid(), Msg :: message()) -> ok.
+-spec send(Pid :: pid(), Msg :: message()) -> ok | any().
 
 send(Pid, Msg) ->
   gen_server:call(Pid, {send, Msg, #{}}).
 
--spec send(Pid :: pid(), Msg :: message(), Prams :: map()) -> ok.
+-spec send(Pid :: pid(), Msg :: message(), Prams :: map()) -> ok | any().
 send(Pid, Msg, Params) ->
   gen_server:call(Pid, {send, Msg, Params}).
 
