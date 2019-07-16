@@ -7,11 +7,11 @@ Different channels types are initiated using configurations. Here is a publisher
 ```erlang
 Config = #{
 	module => channel_rabbitmq,
-    pattern => pub_sub,
-    namespace => <<>>,
-    network_params => #{
-	    host => {0,0,0,0},
-        port => Port
+	pattern => pub_sub,
+	namespace => <<>>,
+	network_params => #{
+		host => {0,0,0,0},
+		port => Port
 	}
 },
 {ok, Channel} = antidote_channel:start_link(Config),
@@ -20,11 +20,11 @@ And here is the subscriber:
 ```erlang
 Config = #{
 	module => channel_rabbitmq,
-    pattern => pub_sub,
-    handler => self(),
-    topics => [<<"TOPIC">>],
-    namespace => <<>>,
-    network_params => #{
+	pattern => pub_sub,
+	handler => self(),
+	topics => [<<"TOPIC">>],
+	namespace => <<>>,
+	network_params => #{
 		remote_host => {127,0,0,1},
 		remote_port => Port
 	}
