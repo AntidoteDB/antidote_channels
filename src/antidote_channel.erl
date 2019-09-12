@@ -28,6 +28,9 @@
 
 -module(antidote_channel).
 -include_lib("antidote_channel.hrl").
+-include_lib("kernel/include/logger.hrl").
+
+-behaviour(gen_server).
 
 %% API
 -export([start_link/1, send/2, send/3, reply/3, is_alive/2, get_config/1, stop/1]).
@@ -36,16 +39,11 @@
 
 -define(SERVER, ?MODULE).
 
--behaviour(gen_server).
-
 -record(state, {module, config, handler, channel_state, buffer = [], pending = #{}}).
 
 -type event() :: deliver | do_nothing | buffer.
 
 -type state() :: #state{module :: module(), config :: map(), channel_state :: channel_state()}.
-
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
 
 %%%===================================================================
 %%% Callback declarations

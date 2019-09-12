@@ -28,6 +28,8 @@
 -module(channel_zeromq).
 -include_lib("antidote_channel.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/logger.hrl").
+
 
 -behavior(antidote_channel).
 
@@ -51,8 +53,6 @@
 
 -define(ZMQ_TIMEOUT, 5000).
 -define(PING_TIMEOUT, 2000).
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -432,7 +432,8 @@ is_subscribed(NamespaceTopicIn, Namespace, Topics) ->
         false when Topics == [] -> ok;
         false -> nok
       end;
-    _ -> ?LOG_INFO("Error parsing topic ~p.", [NamespaceTopicIn]), nok
+    _ -> ?LOG_INFO("Error parsing topic ~p.", [NamespaceTopicIn]), 
+      nok
   end.
 
 %===========================================================

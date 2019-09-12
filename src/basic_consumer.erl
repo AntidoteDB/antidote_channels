@@ -35,9 +35,6 @@
 %% API
 -export([start/0, start_link/0, stop/1, init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
-
 -record(state, {channel, msg_buffer = [] :: list()}).
 
 start() ->

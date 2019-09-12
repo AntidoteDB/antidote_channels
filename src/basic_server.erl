@@ -35,9 +35,6 @@
 
 -record(state, {msg_buffer = [] :: list(), channel}).
 
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
-
 start() ->
   gen_server:start(?MODULE, [], []).
 

@@ -53,8 +53,6 @@
 -export([init_channel/1, send/3, reply/3, subscribe/2, handle_message/2, deliver_message/2, get_network_config/1, terminate/2]).
 
 -define(DEFAULT_EXCHANGE, <<"antidote_exchange">>).
--define(LOG_INFO(X, Y), logger:info(X, Y)).
--define(LOG_INFO(X), logger:info(X)).
 
 -spec start_link(Config :: channel_config()) ->
   {ok, Pid :: atom()} |
