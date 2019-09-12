@@ -142,7 +142,7 @@ init_channel(#pub_sub_channel_config{
       case Endpoint of
         undefined -> ok;
         _ ->
-          erlzmq:send(Endpoint, <<>>),
+          ok = erlzmq:send(Endpoint, <<>>),
           timer:sleep(100)
       end,
       State = #channel_state{
@@ -157,9 +157,8 @@ init_channel(#pub_sub_channel_config{
         async = true,
         marshalling = Marshalling
       },
-      trigger_event(chan_started, #{channel => self()}, State),
+      _ = trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
-    {{error, _} = E, _} -> E;
     Error -> Error
   end;
 
@@ -188,9 +187,8 @@ init_channel(#rpc_channel_config{
         async = Async,
         marshalling = Marshalling
       },
-      trigger_event(chan_started, #{channel => self()}, State),
+      _ = trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
-    {{error, _} = E, _} -> E;
     Error -> Error
   end;
 
@@ -224,9 +222,8 @@ init_channel(#rpc_channel_config{
         async = true,
         marshalling = Marshalling
       },
-      trigger_event(chan_started, #{channel => self()}, State),
+      _ = trigger_event(chan_started, #{channel => self()}, State),
       {ok, State};
-    {{error, _} = E, _} -> E;
     Error -> Error
   end;
 
@@ -251,9 +248,9 @@ send(#rpc_msg{} = Msg, _Params, #channel_state{endpoint = Endpoint, marshalling 
 reply(RId, Reply, #channel_state{pending = Pending, marshalling = {Func, _}} = State) ->
   Res = case maps:find(RId, Pending) of
           {ok, {Socket, Id, _}} ->
-            erlzmq:send(Socket, Id, [sndmore]),
-            erlzmq:send(Socket, <<>>, [sndmore]),
-            erlzmq:send(Socket, antidote_channel_utils:marshal(#rpc_msg{request_id = RId, reply_payload = Reply}, Func));
+            ok = erlzmq:send(Socket, Id, [sndmore]),
+            ok = erlzmq:send(Socket, <<>>, [sndmore]),
+            erlzmq:send(Socket, antidote_channel_utils:marshal(#rpc_msg{request_id = RId, reply_payload = Reply}, Func)); % TODO Is this really the intended return value??
           R -> R
         end,
   {Res, State#channel_state{pending = maps:remove(RId, Pending)}}.
@@ -263,9 +260,9 @@ handle_message(#internal_msg{
   payload = #rpc_msg{request_id = RId, request_payload = #ping{}},
   meta = #{socket := Socket, buffered := [_, _, {zmq, _, Id, _}]}
 }, #channel_state{marshalling = {Func, _}} = State) ->
-  erlzmq:send(Socket, Id, [sndmore]),
-  erlzmq:send(Socket, <<>>, [sndmore]),
-  erlzmq:send(Socket, antidote_channel_utils:marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}}, Func)),
+  ok = erlzmq:send(Socket, Id, [sndmore]),
+  ok = erlzmq:send(Socket, <<>>, [sndmore]),
+  ok = erlzmq:send(Socket, antidote_channel_utils:marshal(#rpc_msg{request_id = RId, reply_payload = #ping{msg = pong}}, Func)),
   {ok, State};
 
 handle_message(
@@ -317,12 +314,7 @@ terminate(Reason, #channel_state{context = _C, subs = Subs, endpoint = Endpoint}
     _ -> lists:foreach(fun(Pi) -> erlzmq:close(Pi) end, Subs)
   end,
 
-  trigger_event(chan_closed, #{reason => Reason}, State),
-
-  case Endpoint of
-    undefined -> ok;
-    _ -> erlzmq:close(Endpoint)
-  end,
+  _ = trigger_event(chan_closed, #{reason => Reason}, State),
 
   case Endpoint of
     undefined -> ok;
@@ -338,20 +330,8 @@ deliver_message({zmq, Socket, Msg, Flags} = M, #channel_state{marshalling = {_, 
 deliver_message(_, _) -> {error, bad_request}.
 
 %pub_sub is always true.
--spec is_alive(NetworkParams :: term()) -> true | false.
+-spec is_alive(NetworkParams :: term()) -> boolean().
 is_alive(#pub_sub_zmq_params{host = _Host, port = _Port}) ->
-  %Context = get_context(),
-  %{ok, Socket} = erlzmq:socket(Context, [sub, {active, false}]),
-  %ok = erlzmq:connect(Socket, connection_string({Host, Port})),
-  %ok = erlzmq:setsockopt(Socket, rcvtimeo, ?CONNECTION_TIMEOUT),
-  %ok = erlzmq:setsockopt(Socket, subscribe, <<>>),
-  %erlzmq:recv(Socket),
-  %erlzmq:close(Socket),
-  %case Res of
-  %  {ok, _Msg} -> true;
-  %  {ok, _Msg} -> true;
-  %  _ -> false
-  %end;
   true;
 
 is_alive(#rpc_channel_zmq_params{
@@ -386,7 +366,7 @@ is_alive(#rpc_channel_zmq_params{
 %%%===================================================================
 
 get_context() ->
-  case whereis(zmq_context) of
+  _ = case whereis(zmq_context) of
     undefined ->
       zmq_context:start_link();
     _ -> ok

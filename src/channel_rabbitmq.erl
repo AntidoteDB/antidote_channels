@@ -154,8 +154,11 @@ init_channel(#pub_sub_channel_config{
         auto_ack = false,
         marshalling = Marshalling
       },
-      trigger_event(chan_started, #{channel => self()}, State),
-      {ok, State};
+      case trigger_event(chan_started, #{channel => self()}, State) of
+        ok -> {ok, State};
+        {chan_started, _} -> {ok, State};
+        {chan_closed, _} -> {error, channel_closed} % TODO: Is this correct?
+      end;
     Other -> {error, Other}
   end;
 
@@ -191,9 +194,12 @@ init_channel(#rpc_channel_config{
             auto_ack = AutoAck,
             marshalling = Marshalling
           },
-          trigger_event(chan_started, #{channel => self()}, State),
-          {ok, State};
-        {error, _} = Error -> Error
+      case trigger_event(chan_started, #{channel => self()}, State) of
+        ok -> {ok, State};
+        {chan_started, _} -> {ok, State};
+        {chan_closed, _} -> {error, channel_closed} % TODO: Is this correct?
+      end;
+      {error, _} = Error -> Error
       end;
     Other -> {error, Other}
   end;
@@ -231,9 +237,12 @@ init_channel(#rpc_channel_config{
             rpc_queue_name = RRPC_Name,
             reply_to = QueueName
           },
-          trigger_event(chan_started, #{channel => self()}, State),
-          {ok, State}
-      end;
+      case trigger_event(chan_started, #{channel => self()}, State) of
+        ok -> {ok, State};
+        {chan_started, _} -> {ok, State};
+        {chan_closed, _} -> {error, channel_closed} % TODO: Is this correct?
+      end
+    end;
     Other -> {error, Other}
   end;
 
@@ -276,7 +285,7 @@ Channel, pending = Pending, marshalling = {Func, _}, exchange = Exchange} = Stat
 handle_message(
     #internal_msg{payload = #pub_sub_msg{} = Payload, meta = #{meta := #'basic.deliver'{delivery_tag = Tag}}},
     #channel_state{channel = Channel, handler = Handler, auto_ack = AutoAck} = State) ->
-  emit_event(Handler, Payload),
+  _ = emit_event(Handler, Payload),
   if not AutoAck ->
     amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag})
   end,
@@ -285,7 +294,7 @@ handle_message(
 handle_message(
     #internal_msg{payload = #rpc_msg{request_id = RId, request_payload = R} = Payload, meta = #{meta := #'basic.deliver'{delivery_tag = Tag}} = Meta},
     #channel_state{channel = Channel, handler = Handler, pending = Pending, auto_ack = AutoAck} = State) when R =/= undefined ->
-  emit_event(Handler, Payload),
+  _ = emit_event(Handler, Payload),
   if not AutoAck ->
     amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag})
   end,
@@ -297,7 +306,7 @@ handle_message(
       payload = #rpc_msg{request_id = _RId, reply_payload = R} = Payload
     },
     #channel_state{handler = Handler} = State) when R =/= undefined ->
-  emit_event(Handler, Payload),
+  _ = emit_event(Handler, Payload),
   {ok, State}.
 
 emit_event(Handler, Payload) ->
@@ -305,9 +314,9 @@ emit_event(Handler, Payload) ->
 
 terminate(Reason, #channel_state{channel = Channel, subscriber_tags = Ts} = State) ->
   lists:foreach(fun(T) ->
-    amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T})
+    _ = amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = T})
                 end, Ts),
-  trigger_event(chan_closed, #{reason => Reason}, State),
+  {chan_closed, _ } = trigger_event(chan_closed, #{reason => Reason}, State),
   amqp_channel:close(Channel).
 %amqp_connection:close(Connection).
 
@@ -345,7 +354,7 @@ is_alive(#rabbitmq_network{} = NetworkParams) ->
 % {ok, [Queue]}.
 
 direct_routing_declare(Channel, ExchangeName, RoutingKeys, #'queue.declare'{} = Params) ->
-  declare_exchange(ExchangeName, Channel, <<"direct">>),
+  ok = declare_exchange(ExchangeName, Channel, <<"direct">>),
   Queues = lists:foldl(fun(RK, Qs) ->
     #'queue.declare_ok'{queue = Queue} = amqp_channel:call(Channel, Params),
     Binding = #'queue.bind'{
@@ -369,7 +378,8 @@ declare_exchange(<<>>, Channel, Type) ->
   declare_exchange(?DEFAULT_EXCHANGE, Channel, Type);
 declare_exchange(ExchangeName, Channel, Type) ->
   Exchange = #'exchange.declare'{exchange = ExchangeName, type = Type},
-  #'exchange.declare_ok'{} = amqp_channel:call(Channel, Exchange).
+  #'exchange.declare_ok'{} = amqp_channel:call(Channel, Exchange),
+  ok.
 
 %TODO: Maybe set prefetch count here also
 subscribe_queue(Channel, Queue, Subscriber, AutoAck) ->
@@ -410,7 +420,7 @@ get_amqp_params(#rabbitmq_network{
 
 trigger_event(Event, Attributes, #channel_state{async = true, handler = Handler}) ->
   case Handler of
-    undefined -> ok;
+    undefined -> ok; %TODO this seems to silently swallow messages?
     _ -> Handler ! {Event, Attributes}
   end;
 
